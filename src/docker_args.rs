@@ -41,6 +41,10 @@ pub enum DangerousFlag {
     PidHost,
     NetworkHost,
     Device(String),
+    VolumesFrom(String),
+    UsernsHost,
+    CgroupnsHost,
+    IpcHost,
 }
 
 impl std::fmt::Display for DangerousFlag {
@@ -52,6 +56,10 @@ impl std::fmt::Display for DangerousFlag {
             DangerousFlag::PidHost => write!(f, "--pid=host"),
             DangerousFlag::NetworkHost => write!(f, "--network=host"),
             DangerousFlag::Device(dev) => write!(f, "--device={}", dev),
+            DangerousFlag::VolumesFrom(src) => write!(f, "--volumes-from={}", src),
+            DangerousFlag::UsernsHost => write!(f, "--userns=host"),
+            DangerousFlag::CgroupnsHost => write!(f, "--cgroupns=host"),
+            DangerousFlag::IpcHost => write!(f, "--ipc=host"),
         }
     }
 }
@@ -64,6 +72,8 @@ pub struct DockerCommand {
     pub dangerous_flags: Vec<DangerousFlag>,
     pub compose_file: Option<String>,
     pub image: Option<String>,
+    /// docker cp や docker build でのホストパス
+    pub host_paths: Vec<String>,
 }
 
 static MOUNT_TYPE_BIND_RE: LazyLock<Regex> = LazyLock::new(|| {
@@ -149,6 +159,7 @@ pub fn parse_docker_args(args: &[&str]) -> DockerCommand {
         dangerous_flags: Vec::new(),
         compose_file: None,
         image: None,
+        host_paths: Vec::new(),
     };
 
     if args.is_empty() {
@@ -199,6 +210,19 @@ pub fn parse_docker_args(args: &[&str]) -> DockerCommand {
     };
 
     i += 1;
+
+    // docker cp のパース: docker cp [OPTIONS] SRC DEST
+    // SRC/DEST は container:path または host_path
+    if cmd.subcommand == DockerSubcommand::Cp {
+        parse_cp_args(args, i, &mut cmd);
+        return cmd;
+    }
+
+    // docker build のパース: docker build [OPTIONS] PATH
+    if cmd.subcommand == DockerSubcommand::Build {
+        parse_build_args(args, i, &mut cmd);
+        return cmd;
+    }
 
     // run / create のフラグをパース
     let parse_flags = matches!(
@@ -337,6 +361,60 @@ pub fn parse_docker_args(args: &[&str]) -> DockerCommand {
             continue;
         }
 
+        // --volumes-from
+        if arg == "--volumes-from" {
+            if i + 1 < args.len() {
+                cmd.dangerous_flags
+                    .push(DangerousFlag::VolumesFrom(args[i + 1].to_string()));
+                i += 2;
+                continue;
+            }
+        } else if let Some(value) = arg.strip_prefix("--volumes-from=") {
+            cmd.dangerous_flags
+                .push(DangerousFlag::VolumesFrom(value.to_string()));
+            i += 1;
+            continue;
+        }
+
+        // --userns
+        if arg == "--userns" {
+            if i + 1 < args.len() && args[i + 1] == "host" {
+                cmd.dangerous_flags.push(DangerousFlag::UsernsHost);
+                i += 2;
+                continue;
+            }
+        } else if arg == "--userns=host" {
+            cmd.dangerous_flags.push(DangerousFlag::UsernsHost);
+            i += 1;
+            continue;
+        }
+
+        // --cgroupns
+        if arg == "--cgroupns" {
+            if i + 1 < args.len() && args[i + 1] == "host" {
+                cmd.dangerous_flags.push(DangerousFlag::CgroupnsHost);
+                i += 2;
+                continue;
+            }
+        } else if arg == "--cgroupns=host" {
+            cmd.dangerous_flags.push(DangerousFlag::CgroupnsHost);
+            i += 1;
+            continue;
+        }
+
+        // --ipc
+        if arg == "--ipc" {
+            if i + 1 < args.len() && args[i + 1] == "host" {
+                cmd.dangerous_flags.push(DangerousFlag::IpcHost);
+                i += 2;
+                continue;
+            }
+        } else if arg == "--ipc=host" {
+            cmd.dangerous_flags.push(DangerousFlag::IpcHost);
+            i += 1;
+            continue;
+        }
+
         // 値付きオプションのスキップ (-e, --env, --name, -w, --workdir, etc.)
         if is_flag_with_value(arg) {
             i += 2;
@@ -354,6 +432,97 @@ pub fn parse_docker_args(args: &[&str]) -> DockerCommand {
     }
 
     cmd
+}
+
+/// docker cp 引数をパース: docker cp [OPTIONS] SRC DEST
+/// container:path はコンテナパス、それ以外はホストパス
+fn parse_cp_args(args: &[&str], start: usize, cmd: &mut DockerCommand) {
+    let mut i = start;
+    let mut positional = Vec::new();
+
+    while i < args.len() {
+        let arg = args[i];
+        // cp のオプション (-a, -L, --follow-link, -q)
+        if arg.starts_with('-') {
+            i += 1;
+            continue;
+        }
+        positional.push(arg);
+        i += 1;
+    }
+
+    // SRC と DEST がホストパスかコンテナパスかを判定
+    for path in &positional {
+        // container:path パターン (コロン含みだがドライブレターでない)
+        if path.contains(':') && !path.starts_with('/') && !path.starts_with('.') {
+            // コンテナパスなのでスキップ
+            continue;
+        }
+        // ホストパス
+        cmd.host_paths.push(path.to_string());
+    }
+}
+
+/// docker build 引数をパース: docker build [OPTIONS] PATH
+fn parse_build_args(args: &[&str], start: usize, cmd: &mut DockerCommand) {
+    let mut i = start;
+
+    while i < args.len() {
+        let arg = args[i];
+
+        // -- 以降はコンテキストパス
+        if arg == "--" {
+            if i + 1 < args.len() {
+                cmd.host_paths.push(args[i + 1].to_string());
+            }
+            break;
+        }
+
+        // 値を取るフラグをスキップ
+        if matches!(
+            arg,
+            "-f" | "--file"
+                | "-t"
+                | "--tag"
+                | "--build-arg"
+                | "--target"
+                | "--platform"
+                | "--label"
+                | "--cache-from"
+                | "--network"
+                | "--progress"
+                | "--secret"
+                | "--ssh"
+                | "--output"
+                | "-o"
+                | "--iidfile"
+                | "--load"
+                | "--push"
+        ) {
+            i += 2;
+            continue;
+        }
+        if arg.starts_with("--file=")
+            || arg.starts_with("-f=")
+            || arg.starts_with("--tag=")
+            || arg.starts_with("-t=")
+            || arg.starts_with("--build-arg=")
+            || arg.starts_with("--target=")
+        {
+            i += 1;
+            continue;
+        }
+
+        // ブーリアンフラグ
+        if arg.starts_with('-') {
+            i += 1;
+            continue;
+        }
+
+        // 最初の非フラグ引数 = コンテキストパス
+        cmd.host_paths.push(arg.to_string());
+        break;
+    }
 }
 
 /// docker compose 引数をパース
@@ -457,6 +626,16 @@ fn is_flag_with_value(arg: &str) -> bool {
             | "--pull"
             | "--cgroupns"
             | "--ipc"
+            | "--userns"
+            | "--volumes-from"
+            | "--runtime"
+            | "--cgroup-parent"
+            | "--cidfile"
+            | "--mac-address"
+            | "--network-alias"
+            | "--storage-opt"
+            | "--sysctl"
+            | "--gpus"
     )
 }
 

@@ -206,3 +206,193 @@ fn test_deny_double_slash_path() {
     assert_eq!(exit_code, 0);
     assert_deny(&stdout, "double-slash path //etc//passwd");
 }
+
+// --- 新規: 名前空間分離フラグのテスト ---
+
+#[test]
+fn test_deny_userns_host() {
+    let (stdout, exit_code) =
+        run_hook(&make_bash_input("docker run --userns=host ubuntu"));
+    assert_eq!(exit_code, 0);
+    assert_deny(&stdout, "--userns=host");
+}
+
+#[test]
+fn test_deny_userns_host_space() {
+    let (stdout, exit_code) =
+        run_hook(&make_bash_input("docker run --userns host ubuntu"));
+    assert_eq!(exit_code, 0);
+    assert_deny(&stdout, "--userns host (space)");
+}
+
+#[test]
+fn test_deny_cgroupns_host() {
+    let (stdout, exit_code) =
+        run_hook(&make_bash_input("docker run --cgroupns=host ubuntu"));
+    assert_eq!(exit_code, 0);
+    assert_deny(&stdout, "--cgroupns=host");
+}
+
+#[test]
+fn test_deny_ipc_host() {
+    let (stdout, exit_code) =
+        run_hook(&make_bash_input("docker run --ipc=host ubuntu"));
+    assert_eq!(exit_code, 0);
+    assert_deny(&stdout, "--ipc=host");
+}
+
+// --- 新規: --volumes-from テスト ---
+
+fn assert_ask(stdout: &str, msg: &str) {
+    let output: serde_json::Value =
+        serde_json::from_str(stdout.trim()).unwrap_or_else(|_| panic!("Expected JSON for: {}", msg));
+    assert_eq!(
+        output["hookSpecificOutput"]["permissionDecision"].as_str(),
+        Some("ask"),
+        "Expected ask for: {}",
+        msg
+    );
+}
+
+#[test]
+fn test_ask_volumes_from() {
+    let (stdout, exit_code) =
+        run_hook(&make_bash_input("docker run --volumes-from=mycontainer ubuntu"));
+    assert_eq!(exit_code, 0);
+    assert_ask(&stdout, "--volumes-from should ask");
+}
+
+// --- 新規: docker cp テスト ---
+
+#[test]
+fn test_deny_docker_cp_outside_home() {
+    let (stdout, exit_code) =
+        run_hook(&make_bash_input("docker cp /etc/passwd mycontainer:/tmp/"));
+    assert_eq!(exit_code, 0);
+    assert_deny(&stdout, "docker cp from /etc/passwd");
+}
+
+#[test]
+fn test_allow_docker_cp_home() {
+    let home = dirs::home_dir().unwrap().to_string_lossy().to_string();
+    let cmd = format!("docker cp {}/file.txt mycontainer:/tmp/", home);
+    let (stdout, exit_code) = run_hook(&make_bash_input(&cmd));
+    assert_eq!(exit_code, 0);
+    assert!(
+        stdout.trim().is_empty(),
+        "docker cp from $HOME should be allowed"
+    );
+}
+
+// --- 新規: docker build コンテキストパステスト ---
+
+#[test]
+fn test_deny_docker_build_outside_home() {
+    let (stdout, exit_code) =
+        run_hook(&make_bash_input("docker build -t myapp /etc"));
+    assert_eq!(exit_code, 0);
+    assert_deny(&stdout, "docker build with context /etc");
+}
+
+#[test]
+fn test_allow_docker_build_home() {
+    let home = dirs::home_dir().unwrap().to_string_lossy().to_string();
+    let cmd = format!("docker build -t myapp {}/project", home);
+    let (stdout, exit_code) = run_hook(&make_bash_input(&cmd));
+    assert_eq!(exit_code, 0);
+    assert!(
+        stdout.trim().is_empty(),
+        "docker build with $HOME context should be allowed"
+    );
+}
+
+// --- 新規: 改行によるコマンド分割テスト ---
+
+#[test]
+fn test_deny_newline_separated_docker() {
+    let (stdout, exit_code) = run_hook(&make_bash_input(
+        "echo ok\ndocker run -v /etc:/data ubuntu",
+    ));
+    assert_eq!(exit_code, 0);
+    assert_deny(&stdout, "newline-separated docker command");
+}
+
+// --- 新規: Compose 危険設定テスト ---
+
+#[test]
+fn test_deny_compose_privileged() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("compose.yml"),
+        "services:\n  web:\n    image: ubuntu\n    privileged: true\n",
+    )
+    .unwrap();
+
+    let input = serde_json::json!({
+        "session_id": "test-session",
+        "hook_event_name": "PreToolUse",
+        "tool_name": "Bash",
+        "tool_input": {
+            "command": "docker compose up",
+            "description": "test"
+        },
+        "cwd": dir.path().to_str().unwrap()
+    })
+    .to_string();
+
+    let (stdout, exit_code) = run_hook(&input);
+    assert_eq!(exit_code, 0);
+    assert_deny(&stdout, "compose with privileged: true");
+}
+
+#[test]
+fn test_deny_compose_network_mode_host() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("compose.yml"),
+        "services:\n  web:\n    image: ubuntu\n    network_mode: host\n",
+    )
+    .unwrap();
+
+    let input = serde_json::json!({
+        "session_id": "test-session",
+        "hook_event_name": "PreToolUse",
+        "tool_name": "Bash",
+        "tool_input": {
+            "command": "docker compose up",
+            "description": "test"
+        },
+        "cwd": dir.path().to_str().unwrap()
+    })
+    .to_string();
+
+    let (stdout, exit_code) = run_hook(&input);
+    assert_eq!(exit_code, 0);
+    assert_deny(&stdout, "compose with network_mode: host");
+}
+
+#[test]
+fn test_deny_compose_cap_add() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("compose.yml"),
+        "services:\n  web:\n    image: ubuntu\n    cap_add:\n      - SYS_ADMIN\n",
+    )
+    .unwrap();
+
+    let input = serde_json::json!({
+        "session_id": "test-session",
+        "hook_event_name": "PreToolUse",
+        "tool_name": "Bash",
+        "tool_input": {
+            "command": "docker compose up",
+            "description": "test"
+        },
+        "cwd": dir.path().to_str().unwrap()
+    })
+    .to_string();
+
+    let (stdout, exit_code) = run_hook(&input);
+    assert_eq!(exit_code, 0);
+    assert_deny(&stdout, "compose with cap_add: SYS_ADMIN");
+}

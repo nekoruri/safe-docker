@@ -73,7 +73,14 @@ fn test_non_bash_tool() {
 fn test_invalid_json() {
     let (stdout, exit_code) = run_hook("not json at all");
     assert_eq!(exit_code, 0);
-    assert!(stdout.trim().is_empty(), "Expected empty stdout for invalid JSON");
+    // fail-safe: 不正な JSON は deny
+    let output: serde_json::Value = serde_json::from_str(stdout.trim())
+        .expect("Expected JSON output for invalid input (fail-safe)");
+    assert_eq!(
+        output["hookSpecificOutput"]["permissionDecision"].as_str(),
+        Some("deny"),
+        "Invalid JSON should be denied (fail-safe)"
+    );
 }
 
 // --- docker run: mount outside $HOME → deny ---
@@ -303,7 +310,7 @@ fn test_missing_tool_input_command() {
 
 #[test]
 fn test_very_long_command() {
-    // 256KB を超えるコマンド → input too large で fail-open
+    // 256KB を超えるコマンド → input too large で fail-safe (deny)
     let long_cmd = "a".repeat(257 * 1024);
     let input = serde_json::json!({
         "session_id": "test-session",
@@ -318,10 +325,13 @@ fn test_very_long_command() {
 
     let (stdout, exit_code) = run_hook(&input);
     assert_eq!(exit_code, 0);
-    // fail-open: 入力が大きすぎる場合は allow
-    assert!(
-        stdout.trim().is_empty(),
-        "Very long input should fail-open (allow)"
+    // fail-safe: 入力が大きすぎる場合は deny
+    let output: serde_json::Value = serde_json::from_str(stdout.trim())
+        .expect("Expected JSON output for oversized input (fail-safe)");
+    assert_eq!(
+        output["hookSpecificOutput"]["permissionDecision"].as_str(),
+        Some("deny"),
+        "Very long input should be denied (fail-safe)"
     );
 }
 

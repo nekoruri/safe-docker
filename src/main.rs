@@ -26,8 +26,12 @@ fn main() {
     let input = match hook::read_input() {
         Ok(input) => input,
         Err(e) => {
-            // 入力エラーは fail-open (非docker コマンドかもしれない)
-            log::debug!("Failed to read input: {}", e);
+            // 入力エラーは fail-safe (deny)
+            // 巨大入力によるバイパスや不正な入力を防ぐ
+            hook::output_deny(&format!(
+                "[safe-docker] Failed to read input: {}. Blocking for safety.",
+                e
+            ));
             return;
         }
     };

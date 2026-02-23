@@ -67,7 +67,11 @@ safe-docker はエージェントに「なぜダメか」を伝えるUXレイヤ
 | `--security-opt seccomp=unconfined` | システムコールフィルタの無効化 |
 | `--pid=host` | ホストの PID 名前空間へのアクセス |
 | `--network=host` | ホストのネットワークスタックへのアクセス |
+| `--userns=host` | ホストのユーザー名前空間へのアクセス |
+| `--cgroupns=host` | ホストの cgroup 名前空間へのアクセス |
+| `--ipc=host` | ホストの IPC 名前空間へのアクセス |
 | `--device` | ホストデバイスの直接マウント |
+| `--volumes-from` | 他コンテナからの危険なマウント継承 (ask) |
 
 ### 3. シェル間接実行の検出
 
@@ -83,7 +87,26 @@ safe-docker はエージェントに「なぜダメか」を伝えるUXレイヤ
 
 ファイルが存在しない場合でも `..` を含むパスを論理正規化し、`$HOME/../../etc` のような回避を防ぐ。
 
-### 5. イメージホワイトリスト（オプション）
+### 5. docker cp / docker build のパス検証
+
+`docker cp` と `docker build` で指定されるホストパスに対しても、バインドマウントと同じパス検証を適用する。
+
+- `docker cp /etc/passwd container:/tmp` → **deny**（`$HOME` 外）
+- `docker build -t myapp /etc` → **deny**（`$HOME` 外のコンテキスト）
+- `docker build -t myapp ~/project` → **allow**
+
+### 6. Compose ファイルの危険設定検出
+
+`docker-compose.yml` のサービス定義から危険な設定を検出する。
+
+- `privileged: true` → **deny**
+- `network_mode: host` → **deny**
+- `pid: host` → **deny**
+- `cap_add: [SYS_ADMIN]` → **deny**
+- `security_opt: [apparmor:unconfined]` → **deny**
+- `devices: [/dev/sda]` → **deny**
+
+### 7. イメージホワイトリスト（オプション）
 
 設定により、使用可能な Docker イメージを制限できる。
 

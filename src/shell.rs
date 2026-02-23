@@ -84,7 +84,7 @@ pub fn split_commands(command: &str) -> Vec<String> {
             continue;
         }
 
-        if ch == ';' {
+        if ch == ';' || ch == '\n' {
             push_segment(&mut segments, &current);
             current.clear();
             continue;

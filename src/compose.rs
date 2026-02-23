@@ -1,11 +1,24 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use crate::docker_args::{BindMount, MountSource};
+use crate::docker_args::{BindMount, DangerousFlag, MountSource};
 use crate::error::{Result, SafeDockerError};
+
+/// Compose ファイルの解析結果
+#[derive(Debug, Default)]
+pub struct ComposeAnalysis {
+    pub bind_mounts: Vec<BindMount>,
+    pub dangerous_flags: Vec<DangerousFlag>,
+}
 
 /// docker-compose.yml からバインドマウントを抽出する
 pub fn extract_bind_mounts(compose_path: &Path) -> Result<Vec<BindMount>> {
+    let analysis = analyze_compose(compose_path)?;
+    Ok(analysis.bind_mounts)
+}
+
+/// docker-compose.yml を総合的に解析する（マウント + 危険設定）
+pub fn analyze_compose(compose_path: &Path) -> Result<ComposeAnalysis> {
     let content = std::fs::read_to_string(compose_path).map_err(|e| {
         SafeDockerError::ComposeParse(format!(
             "Cannot read compose file {:?}: {}",
@@ -25,7 +38,7 @@ pub fn extract_bind_mounts(compose_path: &Path) -> Result<Vec<BindMount>> {
         ))
     })?;
 
-    let mut mounts = Vec::new();
+    let mut analysis = ComposeAnalysis::default();
     let compose_dir = compose_path
         .parent()
         .unwrap_or(Path::new("."))
@@ -34,11 +47,12 @@ pub fn extract_bind_mounts(compose_path: &Path) -> Result<Vec<BindMount>> {
     // services セクション解析
     if let Some(services) = yaml.get("services").and_then(|s| s.as_mapping()) {
         for (_service_name, service) in services {
-            extract_service_volumes(service, &compose_dir, &mut mounts);
+            extract_service_volumes(service, &compose_dir, &mut analysis.bind_mounts);
+            extract_service_dangerous_settings(service, &mut analysis.dangerous_flags);
         }
     }
 
-    Ok(mounts)
+    Ok(analysis)
 }
 
 /// サービス定義から volumes を抽出
@@ -89,6 +103,76 @@ fn extract_service_volumes(
                     source: MountSource::ComposeVolumes,
                     read_only: false,
                 });
+            }
+        }
+    }
+}
+
+/// サービス定義から危険な設定を抽出
+fn extract_service_dangerous_settings(
+    service: &serde_yml::Value,
+    flags: &mut Vec<DangerousFlag>,
+) {
+    // privileged: true
+    if service
+        .get("privileged")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false)
+    {
+        flags.push(DangerousFlag::Privileged);
+    }
+
+    // network_mode: host
+    if let Some(mode) = service.get("network_mode").and_then(|v| v.as_str())
+        && mode == "host"
+    {
+        flags.push(DangerousFlag::NetworkHost);
+    }
+
+    // pid: host
+    if let Some(pid) = service.get("pid").and_then(|v| v.as_str())
+        && pid == "host"
+    {
+        flags.push(DangerousFlag::PidHost);
+    }
+
+    // userns_mode: host
+    if let Some(mode) = service.get("userns_mode").and_then(|v| v.as_str())
+        && mode == "host"
+    {
+        flags.push(DangerousFlag::UsernsHost);
+    }
+
+    // ipc: host
+    if let Some(ipc) = service.get("ipc").and_then(|v| v.as_str())
+        && ipc == "host"
+    {
+        flags.push(DangerousFlag::IpcHost);
+    }
+
+    // cap_add: [SYS_ADMIN, ...]
+    if let Some(caps) = service.get("cap_add").and_then(|v| v.as_sequence()) {
+        for cap in caps {
+            if let Some(cap_str) = cap.as_str() {
+                flags.push(DangerousFlag::CapAdd(cap_str.to_string()));
+            }
+        }
+    }
+
+    // security_opt: [apparmor:unconfined, seccomp:unconfined, ...]
+    if let Some(opts) = service.get("security_opt").and_then(|v| v.as_sequence()) {
+        for opt in opts {
+            if let Some(opt_str) = opt.as_str() {
+                flags.push(DangerousFlag::SecurityOpt(opt_str.to_string()));
+            }
+        }
+    }
+
+    // devices: [/dev/sda, ...]
+    if let Some(devices) = service.get("devices").and_then(|v| v.as_sequence()) {
+        for device in devices {
+            if let Some(dev_str) = device.as_str() {
+                flags.push(DangerousFlag::Device(dev_str.to_string()));
             }
         }
     }

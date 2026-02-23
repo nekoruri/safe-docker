@@ -39,25 +39,81 @@ pub fn evaluate(cmd: &DockerCommand, config: &Config, cwd: &str) -> Decision {
             DangerousFlag::Device(dev) => {
                 deny_reasons.push(format!("--device={} is not allowed", dev));
             }
+            DangerousFlag::VolumesFrom(src) => {
+                ask_reasons.push(format!(
+                    "--volumes-from={} may inherit dangerous mounts from another container",
+                    src
+                ));
+            }
+            DangerousFlag::UsernsHost => {
+                deny_reasons.push("--userns=host is not allowed".to_string());
+            }
+            DangerousFlag::CgroupnsHost => {
+                deny_reasons.push("--cgroupns=host is not allowed".to_string());
+            }
+            DangerousFlag::IpcHost => {
+                deny_reasons.push("--ipc=host is not allowed".to_string());
+            }
         }
     }
 
     // 2. compose コマンドの場合、compose ファイルを解析
     let mut all_mounts = cmd.bind_mounts.clone();
+    let mut all_flags: Vec<DangerousFlag> = Vec::new();
     if matches!(
         cmd.subcommand,
         DockerSubcommand::ComposeUp
             | DockerSubcommand::ComposeRun
             | DockerSubcommand::ComposeCreate
     ) {
-        match resolve_compose_mounts(cmd, cwd) {
-            Ok(compose_mounts) => {
-                all_mounts.extend(compose_mounts);
+        match resolve_compose_analysis(cmd, cwd) {
+            Ok(analysis) => {
+                all_mounts.extend(analysis.bind_mounts);
+                all_flags.extend(analysis.dangerous_flags);
             }
             Err(reason) => {
                 // compose ファイルのパースエラーは deny (fail-safe)
                 deny_reasons.push(reason);
             }
+        }
+    }
+
+    // compose ファイルから検出された危険フラグをチェック
+    for flag in &all_flags {
+        match flag {
+            DangerousFlag::Privileged => {
+                deny_reasons.push("Compose: privileged is not allowed".to_string());
+            }
+            DangerousFlag::CapAdd(cap) => {
+                if config.is_capability_blocked(cap) {
+                    deny_reasons.push(format!("Compose: cap_add {} is not allowed", cap));
+                }
+            }
+            DangerousFlag::SecurityOpt(opt) => {
+                if opt.contains("apparmor=unconfined")
+                    || opt.contains("apparmor:unconfined")
+                    || opt.contains("seccomp=unconfined")
+                    || opt.contains("seccomp:unconfined")
+                {
+                    deny_reasons.push(format!("Compose: security_opt {} is not allowed", opt));
+                }
+            }
+            DangerousFlag::PidHost => {
+                deny_reasons.push("Compose: pid host is not allowed".to_string());
+            }
+            DangerousFlag::NetworkHost => {
+                deny_reasons.push("Compose: network_mode host is not allowed".to_string());
+            }
+            DangerousFlag::Device(dev) => {
+                deny_reasons.push(format!("Compose: device {} is not allowed", dev));
+            }
+            DangerousFlag::UsernsHost => {
+                deny_reasons.push("Compose: userns_mode host is not allowed".to_string());
+            }
+            DangerousFlag::IpcHost => {
+                deny_reasons.push("Compose: ipc host is not allowed".to_string());
+            }
+            _ => {}
         }
     }
 
@@ -77,7 +133,23 @@ pub fn evaluate(cmd: &DockerCommand, config: &Config, cwd: &str) -> Decision {
         }
     }
 
-    // 4. イメージホワイトリストチェック
+    // 4. ホストパスの検証 (docker cp, docker build)
+    for host_path in &cmd.host_paths {
+        match path_validator::validate_path(host_path, config) {
+            PathVerdict::Allowed => {}
+            PathVerdict::Sensitive(reason) => {
+                ask_reasons.push(reason);
+            }
+            PathVerdict::Denied(reason) => {
+                deny_reasons.push(reason);
+            }
+            PathVerdict::Unresolvable(reason) => {
+                ask_reasons.push(reason);
+            }
+        }
+    }
+
+    // 5. イメージホワイトリスト
     if !config.allowed_images.is_empty()
         && let Some(image) = &cmd.image
     {
@@ -91,7 +163,7 @@ pub fn evaluate(cmd: &DockerCommand, config: &Config, cwd: &str) -> Decision {
         }
     }
 
-    // 5. 結果集約: deny が一つでもあれば deny、ask があれば ask、それ以外は allow
+    // 6. 結果集約: deny が一つでもあれば deny、ask があれば ask、それ以外は allow
     if !deny_reasons.is_empty() {
         Decision::Deny(format_reasons(&deny_reasons))
     } else if !ask_reasons.is_empty() {
@@ -101,11 +173,11 @@ pub fn evaluate(cmd: &DockerCommand, config: &Config, cwd: &str) -> Decision {
     }
 }
 
-/// compose ファイルからマウントを解決する
-fn resolve_compose_mounts(
+/// compose ファイルを解析してマウントと危険設定を返す
+fn resolve_compose_analysis(
     cmd: &DockerCommand,
     cwd: &str,
-) -> std::result::Result<Vec<crate::docker_args::BindMount>, String> {
+) -> std::result::Result<crate::compose::ComposeAnalysis, String> {
     let compose_path = crate::compose::find_compose_file(
         cmd.compose_file.as_deref(),
         cwd,
@@ -119,7 +191,7 @@ fn resolve_compose_mounts(
                     path.display()
                 ));
             }
-            crate::compose::extract_bind_mounts(&path).map_err(|e| e.to_string())
+            crate::compose::analyze_compose(&path).map_err(|e| e.to_string())
         }
         None => {
             // compose ファイルが見つからない場合は deny
@@ -165,6 +237,7 @@ mod tests {
             dangerous_flags: vec![],
             compose_file: None,
             image: Some("ubuntu".to_string()),
+            host_paths: vec![],
         };
         assert_eq!(evaluate(&cmd, &config, "/tmp"), Decision::Allow);
     }
@@ -183,6 +256,7 @@ mod tests {
             dangerous_flags: vec![],
             compose_file: None,
             image: Some("ubuntu".to_string()),
+            host_paths: vec![],
         };
         let decision = evaluate(&cmd, &config, "/tmp");
         assert!(matches!(decision, Decision::Deny(_)));
@@ -197,6 +271,7 @@ mod tests {
             dangerous_flags: vec![DangerousFlag::Privileged],
             compose_file: None,
             image: Some("ubuntu".to_string()),
+            host_paths: vec![],
         };
         let decision = evaluate(&cmd, &config, "/tmp");
         assert!(matches!(decision, Decision::Deny(_)));
@@ -216,6 +291,7 @@ mod tests {
             dangerous_flags: vec![],
             compose_file: None,
             image: Some("ubuntu".to_string()),
+            host_paths: vec![],
         };
         let decision = evaluate(&cmd, &config, "/tmp");
         assert!(matches!(decision, Decision::Ask(_)));
@@ -230,6 +306,7 @@ mod tests {
             dangerous_flags: vec![DangerousFlag::CapAdd("SYS_ADMIN".to_string())],
             compose_file: None,
             image: Some("ubuntu".to_string()),
+            host_paths: vec![],
         };
         let decision = evaluate(&cmd, &config, "/tmp");
         assert!(matches!(decision, Decision::Deny(_)));
@@ -249,6 +326,7 @@ mod tests {
             dangerous_flags: vec![DangerousFlag::Privileged],
             compose_file: None,
             image: Some("ubuntu".to_string()),
+            host_paths: vec![],
         };
         let decision = evaluate(&cmd, &config, "/tmp");
         match decision {
@@ -268,6 +346,7 @@ mod tests {
             dangerous_flags: vec![],
             compose_file: None,
             image: Some("ubuntu".to_string()),
+            host_paths: vec![],
         };
         assert_eq!(evaluate(&cmd, &config, "/tmp"), Decision::Allow);
     }
@@ -299,6 +378,7 @@ mod tests {
             dangerous_flags: vec![],
             compose_file: None,
             image: Some("nginx".to_string()),
+            host_paths: vec![],
         };
         let decision = evaluate(&cmd, &config, "/tmp");
         assert!(
@@ -318,6 +398,7 @@ mod tests {
             dangerous_flags: vec![],
             compose_file: None,
             image: Some("ubuntu".to_string()),
+            host_paths: vec![],
         };
         let decision = evaluate(&cmd, &config, "/tmp");
         assert_eq!(decision, Decision::Allow);
@@ -333,6 +414,7 @@ mod tests {
             dangerous_flags: vec![],
             compose_file: None,
             image: Some("ubuntu:22.04".to_string()),
+            host_paths: vec![],
         };
         let decision = evaluate(&cmd, &config, "/tmp");
         assert_eq!(
@@ -353,6 +435,7 @@ mod tests {
             )],
             compose_file: None,
             image: Some("ubuntu".to_string()),
+            host_paths: vec![],
         };
         let decision = evaluate(&cmd, &config, "/tmp");
         assert!(matches!(decision, Decision::Deny(_)));
@@ -369,6 +452,7 @@ mod tests {
             )],
             compose_file: None,
             image: Some("ubuntu".to_string()),
+            host_paths: vec![],
         };
         let decision = evaluate(&cmd, &config, "/tmp");
         assert!(matches!(decision, Decision::Deny(_)));
@@ -385,6 +469,7 @@ mod tests {
             )],
             compose_file: None,
             image: Some("ubuntu".to_string()),
+            host_paths: vec![],
         };
         let decision = evaluate(&cmd, &config, "/tmp");
         assert!(matches!(decision, Decision::Deny(_)));
@@ -401,6 +486,7 @@ mod tests {
             )],
             compose_file: None,
             image: Some("ubuntu".to_string()),
+            host_paths: vec![],
         };
         let decision = evaluate(&cmd, &config, "/tmp");
         // no-new-privileges は deny 対象ではない
@@ -420,6 +506,7 @@ mod tests {
             dangerous_flags: vec![DangerousFlag::NetworkHost],
             compose_file: None,
             image: Some("ubuntu".to_string()),
+            host_paths: vec![],
         };
         let decision = evaluate(&cmd, &config, "/tmp");
         assert!(matches!(decision, Decision::Deny(_)));
@@ -435,6 +522,7 @@ mod tests {
             dangerous_flags: vec![],
             compose_file: None,
             image: None,
+            host_paths: vec![],
         };
         let decision = evaluate(&cmd, &config, dir.path().to_str().unwrap());
         assert!(
@@ -456,6 +544,7 @@ mod tests {
             dangerous_flags: vec![],
             compose_file: None,
             image: None,
+            host_paths: vec![],
         };
         let decision = evaluate(&cmd, &config, dir.path().to_str().unwrap());
         assert!(
@@ -487,6 +576,7 @@ mod tests {
             dangerous_flags: vec![],
             compose_file: None,
             image: Some("ubuntu".to_string()),
+            host_paths: vec![],
         };
         let decision = evaluate(&cmd, &config, "/tmp");
         // deny (/etc) が ask (.ssh) より優先
@@ -507,6 +597,7 @@ mod tests {
             dangerous_flags: vec![],
             compose_file: None,
             image: None,
+            host_paths: vec![],
         };
         // ComposeExec は compose ファイル解析対象外
         let decision = evaluate(&cmd, &config, dir.path().to_str().unwrap());
@@ -532,6 +623,7 @@ mod tests {
             dangerous_flags: vec![],
             compose_file: None,
             image: Some("ubuntu".to_string()),
+            host_paths: vec![],
         };
         let decision = evaluate(&cmd, &config, "/tmp");
         assert_eq!(
