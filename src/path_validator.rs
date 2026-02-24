@@ -56,9 +56,7 @@ fn has_unresolved_vars(path: &str) -> bool {
     for i in 0..bytes.len() {
         if bytes[i] == b'$'
             && i + 1 < bytes.len()
-            && (bytes[i + 1].is_ascii_alphabetic()
-                || bytes[i + 1] == b'_'
-                || bytes[i + 1] == b'{')
+            && (bytes[i + 1].is_ascii_alphabetic() || bytes[i + 1] == b'_' || bytes[i + 1] == b'{')
         {
             return true;
         }
@@ -75,8 +73,7 @@ fn logical_normalize(path: &Path) -> PathBuf {
         match component {
             Component::ParentDir => {
                 // ルートを超えて .. は適用しない
-                if !components.is_empty()
-                    && !matches!(components.last(), Some(&Component::RootDir))
+                if !components.is_empty() && !matches!(components.last(), Some(&Component::RootDir))
                 {
                     components.pop();
                 } else if components.is_empty() {
@@ -123,10 +120,7 @@ pub fn validate_path(raw_path: &str, config: &Config) -> PathVerdict {
             || normalized == "/run/docker.sock"
             || normalized.ends_with("/docker.sock")
         {
-            return PathVerdict::Denied(format!(
-                "Docker socket mount is blocked: {}",
-                raw_path
-            ));
+            return PathVerdict::Denied(format!("Docker socket mount is blocked: {}", raw_path));
         }
     }
 
@@ -140,10 +134,7 @@ pub fn validate_path(raw_path: &str, config: &Config) -> PathVerdict {
                 || logical_trimmed == "/run/docker.sock"
                 || logical_trimmed.ends_with("/docker.sock"))
         {
-            return PathVerdict::Denied(format!(
-                "Docker socket mount is blocked: {}",
-                raw_path
-            ));
+            return PathVerdict::Denied(format!("Docker socket mount is blocked: {}", raw_path));
         }
     }
 
@@ -229,10 +220,7 @@ mod tests {
     fn test_expand_env_home_var() {
         let home = home_dir().unwrap().to_string_lossy().to_string();
         assert_eq!(expand_env("$HOME/projects"), format!("{}/projects", home));
-        assert_eq!(
-            expand_env("${HOME}/projects"),
-            format!("{}/projects", home)
-        );
+        assert_eq!(expand_env("${HOME}/projects"), format!("{}/projects", home));
     }
 
     #[test]
@@ -361,7 +349,11 @@ mod tests {
         let config = Config::default();
         let home = home_dir().unwrap().to_string_lossy().to_string();
         let result = validate_path(&home, &config);
-        assert_eq!(result, PathVerdict::Allowed, "$HOME itself should be allowed");
+        assert_eq!(
+            result,
+            PathVerdict::Allowed,
+            "$HOME itself should be allowed"
+        );
     }
 
     #[test]
@@ -370,10 +362,12 @@ mod tests {
         // $PWD は環境変数から展開される
         let result = validate_path("$PWD", &config);
         // $PWD の値によって結果が変わるが、パニックしないことを確認
-        assert!(!matches!(result, PathVerdict::Unresolvable(_)) || {
-            // PWD が設定されていない場合は Unresolvable もあり得る
-            std::env::var("PWD").is_err()
-        });
+        assert!(
+            !matches!(result, PathVerdict::Unresolvable(_)) || {
+                // PWD が設定されていない場合は Unresolvable もあり得る
+                std::env::var("PWD").is_err()
+            }
+        );
     }
 
     #[test]

@@ -223,12 +223,18 @@ fn is_shell_dash_c_with_docker(cmd: &str) -> bool {
     } else {
         // /bin/bash, /bin/sh, /usr/bin/env bash 等にも対応
         let prefixes = [
-            "/bin/bash ", "/bin/sh ", "/usr/bin/bash ", "/usr/bin/sh ",
-            "/bin/bash\t", "/bin/sh\t", "/usr/bin/bash\t", "/usr/bin/sh\t",
+            "/bin/bash ",
+            "/bin/sh ",
+            "/usr/bin/bash ",
+            "/usr/bin/sh ",
+            "/bin/bash\t",
+            "/bin/sh\t",
+            "/usr/bin/bash\t",
+            "/usr/bin/sh\t",
         ];
-        prefixes.iter().find_map(|prefix| {
-            cmd.strip_prefix(prefix).map(|rest| rest.trim_start())
-        })
+        prefixes
+            .iter()
+            .find_map(|prefix| cmd.strip_prefix(prefix).map(|rest| rest.trim_start()))
     };
 
     if let Some(args) = shell_cmd {
@@ -283,7 +289,10 @@ fn skip_env_assignments(cmd: &str) -> &str {
                 && before_eq
                     .chars()
                     .all(|c| c.is_ascii_alphanumeric() || c == '_')
-                && before_eq.chars().next().is_some_and(|c| !c.is_ascii_digit())
+                && before_eq
+                    .chars()
+                    .next()
+                    .is_some_and(|c| !c.is_ascii_digit())
             {
                 // = の後の値を読み飛ばす（クォート対応）
                 let after_eq = &trimmed[eq_pos + 1..];
@@ -395,10 +404,7 @@ mod tests {
     #[test]
     fn test_split_semicolon() {
         let result = split_commands("echo hello; docker run ubuntu; echo done");
-        assert_eq!(
-            result,
-            vec!["echo hello", "docker run ubuntu", "echo done"]
-        );
+        assert_eq!(result, vec!["echo hello", "docker run ubuntu", "echo done"]);
     }
 
     #[test]
@@ -410,10 +416,7 @@ mod tests {
     #[test]
     fn test_split_quoted_pipe() {
         let result = split_commands(r#"echo "hello | world" && docker run ubuntu"#);
-        assert_eq!(
-            result,
-            vec![r#"echo "hello | world""#, "docker run ubuntu"]
-        );
+        assert_eq!(result, vec![r#"echo "hello | world""#, "docker run ubuntu"]);
     }
 
     #[test]
@@ -425,10 +428,7 @@ mod tests {
     #[test]
     fn test_split_subshell() {
         let result = split_commands("echo $(docker ps) && docker run ubuntu");
-        assert_eq!(
-            result,
-            vec!["echo $(docker ps)", "docker run ubuntu"]
-        );
+        assert_eq!(result, vec!["echo $(docker ps)", "docker run ubuntu"]);
     }
 
     #[test]
@@ -437,7 +437,9 @@ mod tests {
         assert!(is_docker_command("docker compose up"));
         assert!(is_docker_command("docker-compose up"));
         assert!(is_docker_command("sudo docker run ubuntu"));
-        assert!(is_docker_command("DOCKER_HOST=tcp://localhost:2375 docker ps"));
+        assert!(is_docker_command(
+            "DOCKER_HOST=tcp://localhost:2375 docker ps"
+        ));
         assert!(!is_docker_command("echo hello"));
         assert!(!is_docker_command("ls -la"));
     }
@@ -456,8 +458,7 @@ mod tests {
 
     #[test]
     fn test_extract_docker_args_env() {
-        let args =
-            extract_docker_args("DOCKER_HOST=tcp://localhost:2375 docker ps");
+        let args = extract_docker_args("DOCKER_HOST=tcp://localhost:2375 docker ps");
         assert_eq!(args, vec!["ps"]);
     }
 

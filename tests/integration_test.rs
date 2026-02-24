@@ -37,10 +37,7 @@ fn make_bash_input(command: &str) -> String {
 }
 
 fn home_dir() -> String {
-    dirs::home_dir()
-        .unwrap()
-        .to_string_lossy()
-        .to_string()
+    dirs::home_dir().unwrap().to_string_lossy().to_string()
 }
 
 // --- 非 docker コマンド: allow (exit 0, no output) ---
@@ -49,7 +46,10 @@ fn home_dir() -> String {
 fn test_non_docker_command() {
     let (stdout, exit_code) = run_hook(&make_bash_input("ls -la /tmp"));
     assert_eq!(exit_code, 0);
-    assert!(stdout.trim().is_empty(), "Expected empty stdout for non-docker command");
+    assert!(
+        stdout.trim().is_empty(),
+        "Expected empty stdout for non-docker command"
+    );
 }
 
 #[test]
@@ -89,15 +89,18 @@ fn test_invalid_json() {
 fn test_deny_mount_etc() {
     let (stdout, exit_code) = run_hook(&make_bash_input("docker run -v /etc:/data ubuntu"));
     assert_eq!(exit_code, 0);
-    let output: serde_json::Value = serde_json::from_str(stdout.trim()).expect("Expected JSON output");
+    let output: serde_json::Value =
+        serde_json::from_str(stdout.trim()).expect("Expected JSON output");
     assert_eq!(
         output["hookSpecificOutput"]["permissionDecision"].as_str(),
         Some("deny")
     );
-    assert!(output["hookSpecificOutput"]["permissionDecisionReason"]
-        .as_str()
-        .unwrap()
-        .contains("outside $HOME"));
+    assert!(
+        output["hookSpecificOutput"]["permissionDecisionReason"]
+            .as_str()
+            .unwrap()
+            .contains("outside $HOME")
+    );
 }
 
 #[test]
@@ -117,7 +120,10 @@ fn test_allow_mount_home() {
     let cmd = format!("docker run -v {}/projects:/app ubuntu", home_dir());
     let (stdout, exit_code) = run_hook(&make_bash_input(&cmd));
     assert_eq!(exit_code, 0);
-    assert!(stdout.trim().is_empty(), "Expected empty stdout (allow) for $HOME mount");
+    assert!(
+        stdout.trim().is_empty(),
+        "Expected empty stdout (allow) for $HOME mount"
+    );
 }
 
 #[test]
@@ -134,7 +140,8 @@ fn test_ask_ssh_mount() {
     let cmd = format!("docker run -v {}/.ssh:/keys ubuntu", home_dir());
     let (stdout, exit_code) = run_hook(&make_bash_input(&cmd));
     assert_eq!(exit_code, 0);
-    let output: serde_json::Value = serde_json::from_str(stdout.trim()).expect("Expected JSON output");
+    let output: serde_json::Value =
+        serde_json::from_str(stdout.trim()).expect("Expected JSON output");
     assert_eq!(
         output["hookSpecificOutput"]["permissionDecision"].as_str(),
         Some("ask")
@@ -152,10 +159,12 @@ fn test_deny_privileged() {
         output["hookSpecificOutput"]["permissionDecision"].as_str(),
         Some("deny")
     );
-    assert!(output["hookSpecificOutput"]["permissionDecisionReason"]
-        .as_str()
-        .unwrap()
-        .contains("privileged"));
+    assert!(
+        output["hookSpecificOutput"]["permissionDecisionReason"]
+            .as_str()
+            .unwrap()
+            .contains("privileged")
+    );
 }
 
 // --- docker run: --cap-add SYS_ADMIN → deny ---
@@ -209,7 +218,9 @@ fn test_allow_docker_ps() {
 
 #[test]
 fn test_deny_chained_command() {
-    let (stdout, _) = run_hook(&make_bash_input("cd /tmp && docker run -v /etc:/data ubuntu"));
+    let (stdout, _) = run_hook(&make_bash_input(
+        "cd /tmp && docker run -v /etc:/data ubuntu",
+    ));
     let output: serde_json::Value = serde_json::from_str(stdout.trim()).unwrap();
     assert_eq!(
         output["hookSpecificOutput"]["permissionDecision"].as_str(),
@@ -221,7 +232,9 @@ fn test_deny_chained_command() {
 
 #[test]
 fn test_deny_piped_command() {
-    let (stdout, _) = run_hook(&make_bash_input("echo test | docker run -v /etc:/data ubuntu"));
+    let (stdout, _) = run_hook(&make_bash_input(
+        "echo test | docker run -v /etc:/data ubuntu",
+    ));
     let output: serde_json::Value = serde_json::from_str(stdout.trim()).unwrap();
     assert_eq!(
         output["hookSpecificOutput"]["permissionDecision"].as_str(),
@@ -353,8 +366,7 @@ fn test_multiple_docker_segments_mixed() {
 
 #[test]
 fn test_deny_compose_up_no_file() {
-    let (stdout, exit_code) =
-        run_hook(&make_bash_input("docker compose up"));
+    let (stdout, exit_code) = run_hook(&make_bash_input("docker compose up"));
     assert_eq!(exit_code, 0);
     // /tmp に compose ファイルがない → deny
     let output: serde_json::Value = serde_json::from_str(stdout.trim()).unwrap();
@@ -367,9 +379,7 @@ fn test_deny_compose_up_no_file() {
 
 #[test]
 fn test_deny_sudo_docker_outside_home() {
-    let (stdout, _) = run_hook(&make_bash_input(
-        "sudo docker run -v /etc:/data ubuntu",
-    ));
+    let (stdout, _) = run_hook(&make_bash_input("sudo docker run -v /etc:/data ubuntu"));
     let output: serde_json::Value = serde_json::from_str(stdout.trim()).unwrap();
     assert_eq!(
         output["hookSpecificOutput"]["permissionDecision"].as_str(),
@@ -438,8 +448,7 @@ fn test_deny_pid_host_integration() {
 #[test]
 fn test_allow_docker_compose_exec() {
     // compose exec は compose ファイルを解析しない
-    let (stdout, exit_code) =
-        run_hook(&make_bash_input("docker compose exec web bash"));
+    let (stdout, exit_code) = run_hook(&make_bash_input("docker compose exec web bash"));
     assert_eq!(exit_code, 0);
     assert!(
         stdout.trim().is_empty(),
