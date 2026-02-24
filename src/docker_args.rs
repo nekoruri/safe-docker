@@ -15,6 +15,22 @@ pub enum DockerSubcommand {
     Other(String),
 }
 
+impl std::fmt::Display for DockerSubcommand {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Run => write!(f, "run"),
+            Self::Create => write!(f, "create"),
+            Self::Build => write!(f, "build"),
+            Self::Cp => write!(f, "cp"),
+            Self::ComposeUp => write!(f, "compose-up"),
+            Self::ComposeRun => write!(f, "compose-run"),
+            Self::ComposeCreate => write!(f, "compose-create"),
+            Self::ComposeExec => write!(f, "compose-exec"),
+            Self::Other(s) => write!(f, "{}", s),
+        }
+    }
+}
+
 /// バインドマウントの由来
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MountSource {
