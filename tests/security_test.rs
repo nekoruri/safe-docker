@@ -39,8 +39,8 @@ fn make_bash_input(command: &str) -> String {
 }
 
 fn assert_deny(stdout: &str, msg: &str) {
-    let output: serde_json::Value =
-        serde_json::from_str(stdout.trim()).unwrap_or_else(|_| panic!("Expected JSON for: {}", msg));
+    let output: serde_json::Value = serde_json::from_str(stdout.trim())
+        .unwrap_or_else(|_| panic!("Expected JSON for: {}", msg));
     assert_eq!(
         output["hookSpecificOutput"]["permissionDecision"].as_str(),
         Some("deny"),
@@ -53,24 +53,25 @@ fn assert_deny(stdout: &str, msg: &str) {
 
 #[test]
 fn test_deny_eval_docker() {
-    let (stdout, exit_code) =
-        run_hook(&make_bash_input(r#"eval "docker run -v /etc:/data ubuntu""#));
+    let (stdout, exit_code) = run_hook(&make_bash_input(
+        r#"eval "docker run -v /etc:/data ubuntu""#,
+    ));
     assert_eq!(exit_code, 0);
     assert_deny(&stdout, "eval docker run");
 }
 
 #[test]
 fn test_deny_bash_c_docker() {
-    let (stdout, exit_code) =
-        run_hook(&make_bash_input(r#"bash -c "docker run -v /etc:/data ubuntu""#));
+    let (stdout, exit_code) = run_hook(&make_bash_input(
+        r#"bash -c "docker run -v /etc:/data ubuntu""#,
+    ));
     assert_eq!(exit_code, 0);
     assert_deny(&stdout, "bash -c docker run");
 }
 
 #[test]
 fn test_deny_sh_c_docker_single_quote() {
-    let (stdout, exit_code) =
-        run_hook(&make_bash_input("sh -c 'docker run -v /etc:/data ubuntu'"));
+    let (stdout, exit_code) = run_hook(&make_bash_input("sh -c 'docker run -v /etc:/data ubuntu'"));
     assert_eq!(exit_code, 0);
     assert_deny(&stdout, "sh -c (single quote) docker run");
 }
@@ -113,8 +114,7 @@ fn test_deny_security_opt_apparmor_colon() {
 
 #[test]
 fn test_deny_net_host_space() {
-    let (stdout, exit_code) =
-        run_hook(&make_bash_input("docker run --net host ubuntu"));
+    let (stdout, exit_code) = run_hook(&make_bash_input("docker run --net host ubuntu"));
     assert_eq!(exit_code, 0);
     assert_deny(&stdout, "--net host (space-separated)");
 }
@@ -131,9 +131,7 @@ fn test_deny_subshell_with_docker() {
 
 #[test]
 fn test_deny_sudo_docker_mount() {
-    let (stdout, exit_code) = run_hook(&make_bash_input(
-        "sudo docker run -v /etc:/data ubuntu",
-    ));
+    let (stdout, exit_code) = run_hook(&make_bash_input("sudo docker run -v /etc:/data ubuntu"));
     assert_eq!(exit_code, 0);
     assert_deny(&stdout, "sudo docker with outside-home mount");
 }
@@ -200,9 +198,8 @@ fn test_deny_chained_eval_docker() {
 
 #[test]
 fn test_deny_double_slash_path() {
-    let (stdout, exit_code) = run_hook(&make_bash_input(
-        "docker run -v //etc//passwd:/data ubuntu",
-    ));
+    let (stdout, exit_code) =
+        run_hook(&make_bash_input("docker run -v //etc//passwd:/data ubuntu"));
     assert_eq!(exit_code, 0);
     assert_deny(&stdout, "double-slash path //etc//passwd");
 }
@@ -211,32 +208,28 @@ fn test_deny_double_slash_path() {
 
 #[test]
 fn test_deny_userns_host() {
-    let (stdout, exit_code) =
-        run_hook(&make_bash_input("docker run --userns=host ubuntu"));
+    let (stdout, exit_code) = run_hook(&make_bash_input("docker run --userns=host ubuntu"));
     assert_eq!(exit_code, 0);
     assert_deny(&stdout, "--userns=host");
 }
 
 #[test]
 fn test_deny_userns_host_space() {
-    let (stdout, exit_code) =
-        run_hook(&make_bash_input("docker run --userns host ubuntu"));
+    let (stdout, exit_code) = run_hook(&make_bash_input("docker run --userns host ubuntu"));
     assert_eq!(exit_code, 0);
     assert_deny(&stdout, "--userns host (space)");
 }
 
 #[test]
 fn test_deny_cgroupns_host() {
-    let (stdout, exit_code) =
-        run_hook(&make_bash_input("docker run --cgroupns=host ubuntu"));
+    let (stdout, exit_code) = run_hook(&make_bash_input("docker run --cgroupns=host ubuntu"));
     assert_eq!(exit_code, 0);
     assert_deny(&stdout, "--cgroupns=host");
 }
 
 #[test]
 fn test_deny_ipc_host() {
-    let (stdout, exit_code) =
-        run_hook(&make_bash_input("docker run --ipc=host ubuntu"));
+    let (stdout, exit_code) = run_hook(&make_bash_input("docker run --ipc=host ubuntu"));
     assert_eq!(exit_code, 0);
     assert_deny(&stdout, "--ipc=host");
 }
@@ -244,8 +237,8 @@ fn test_deny_ipc_host() {
 // --- 新規: --volumes-from テスト ---
 
 fn assert_ask(stdout: &str, msg: &str) {
-    let output: serde_json::Value =
-        serde_json::from_str(stdout.trim()).unwrap_or_else(|_| panic!("Expected JSON for: {}", msg));
+    let output: serde_json::Value = serde_json::from_str(stdout.trim())
+        .unwrap_or_else(|_| panic!("Expected JSON for: {}", msg));
     assert_eq!(
         output["hookSpecificOutput"]["permissionDecision"].as_str(),
         Some("ask"),
@@ -256,8 +249,9 @@ fn assert_ask(stdout: &str, msg: &str) {
 
 #[test]
 fn test_ask_volumes_from() {
-    let (stdout, exit_code) =
-        run_hook(&make_bash_input("docker run --volumes-from=mycontainer ubuntu"));
+    let (stdout, exit_code) = run_hook(&make_bash_input(
+        "docker run --volumes-from=mycontainer ubuntu",
+    ));
     assert_eq!(exit_code, 0);
     assert_ask(&stdout, "--volumes-from should ask");
 }
@@ -266,8 +260,7 @@ fn test_ask_volumes_from() {
 
 #[test]
 fn test_deny_docker_cp_outside_home() {
-    let (stdout, exit_code) =
-        run_hook(&make_bash_input("docker cp /etc/passwd mycontainer:/tmp/"));
+    let (stdout, exit_code) = run_hook(&make_bash_input("docker cp /etc/passwd mycontainer:/tmp/"));
     assert_eq!(exit_code, 0);
     assert_deny(&stdout, "docker cp from /etc/passwd");
 }
@@ -288,8 +281,7 @@ fn test_allow_docker_cp_home() {
 
 #[test]
 fn test_deny_docker_build_outside_home() {
-    let (stdout, exit_code) =
-        run_hook(&make_bash_input("docker build -t myapp /etc"));
+    let (stdout, exit_code) = run_hook(&make_bash_input("docker build -t myapp /etc"));
     assert_eq!(exit_code, 0);
     assert_deny(&stdout, "docker build with context /etc");
 }
@@ -310,9 +302,8 @@ fn test_allow_docker_build_home() {
 
 #[test]
 fn test_deny_newline_separated_docker() {
-    let (stdout, exit_code) = run_hook(&make_bash_input(
-        "echo ok\ndocker run -v /etc:/data ubuntu",
-    ));
+    let (stdout, exit_code) =
+        run_hook(&make_bash_input("echo ok\ndocker run -v /etc:/data ubuntu"));
     assert_eq!(exit_code, 0);
     assert_deny(&stdout, "newline-separated docker command");
 }

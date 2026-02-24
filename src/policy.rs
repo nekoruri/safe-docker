@@ -26,8 +26,7 @@ pub fn evaluate(cmd: &DockerCommand, config: &Config, cwd: &str) -> Decision {
                     || opt.contains("seccomp=unconfined")
                     || opt.contains("seccomp:unconfined")
                 {
-                    deny_reasons
-                        .push(format!("--security-opt {} is not allowed", opt));
+                    deny_reasons.push(format!("--security-opt {} is not allowed", opt));
                 }
             }
             DangerousFlag::PidHost => {
@@ -178,18 +177,12 @@ fn resolve_compose_analysis(
     cmd: &DockerCommand,
     cwd: &str,
 ) -> std::result::Result<crate::compose::ComposeAnalysis, String> {
-    let compose_path = crate::compose::find_compose_file(
-        cmd.compose_file.as_deref(),
-        cwd,
-    );
+    let compose_path = crate::compose::find_compose_file(cmd.compose_file.as_deref(), cwd);
 
     match compose_path {
         Some(path) => {
             if !path.exists() {
-                return Err(format!(
-                    "Compose file not found: {}",
-                    path.display()
-                ));
+                return Err(format!("Compose file not found: {}", path.display()));
             }
             crate::compose::analyze_compose(&path).map_err(|e| e.to_string())
         }
@@ -205,10 +198,7 @@ fn format_reasons(reasons: &[String]) -> String {
     if reasons.len() == 1 {
         format!("[safe-docker] {}", reasons[0])
     } else {
-        let items: Vec<String> = reasons
-            .iter()
-            .map(|r| format!("  - {}", r))
-            .collect();
+        let items: Vec<String> = reasons.iter().map(|r| format!("  - {}", r)).collect();
         format!("[safe-docker] Multiple issues found:\n{}", items.join("\n"))
     }
 }
@@ -359,8 +349,7 @@ mod tests {
 
     #[test]
     fn test_format_reasons_multiple() {
-        let result =
-            format_reasons(&["reason 1".to_string(), "reason 2".to_string()]);
+        let result = format_reasons(&["reason 1".to_string(), "reason 2".to_string()]);
         assert!(result.contains("Multiple issues"));
         assert!(result.contains("reason 1"));
         assert!(result.contains("reason 2"));
@@ -447,9 +436,7 @@ mod tests {
         let cmd = DockerCommand {
             subcommand: DockerSubcommand::Run,
             bind_mounts: vec![],
-            dangerous_flags: vec![DangerousFlag::SecurityOpt(
-                "seccomp=unconfined".to_string(),
-            )],
+            dangerous_flags: vec![DangerousFlag::SecurityOpt("seccomp=unconfined".to_string())],
             compose_file: None,
             image: Some("ubuntu".to_string()),
             host_paths: vec![],

@@ -157,9 +157,9 @@ impl Config {
 
     /// フラグがブロック対象か判定
     pub fn is_flag_blocked(&self, flag: &str) -> bool {
-        self.blocked_flags.iter().any(|blocked| {
-            flag == blocked.as_str() || flag.starts_with(&format!("{}=", blocked))
-        })
+        self.blocked_flags
+            .iter()
+            .any(|blocked| flag == blocked.as_str() || flag.starts_with(&format!("{}=", blocked)))
     }
 
     /// capability がブロック対象か判定

@@ -78,9 +78,7 @@ fn main() {
     hook::output_decision(&decision);
 
     // 監査ログ出力 (★レスポンス後にファイル I/O)
-    if audit_enabled
-        && let Some(ref collector) = collector
-    {
+    if audit_enabled && let Some(ref collector) = collector {
         let (decision_str, reason) = match &decision {
             hook::Decision::Allow => ("allow", None),
             hook::Decision::Deny(r) => ("deny", Some(r.as_str())),
@@ -184,8 +182,7 @@ mod tests {
 
     #[test]
     fn test_docker_no_mounts() {
-        let decision =
-            process_command("docker run ubuntu echo hello", &default_config(), "/tmp");
+        let decision = process_command("docker run ubuntu echo hello", &default_config(), "/tmp");
         assert_eq!(decision, Decision::Allow);
     }
 
@@ -198,21 +195,14 @@ mod tests {
 
     #[test]
     fn test_docker_denied_mount() {
-        let decision = process_command(
-            "docker run -v /etc:/data ubuntu",
-            &default_config(),
-            "/tmp",
-        );
+        let decision =
+            process_command("docker run -v /etc:/data ubuntu", &default_config(), "/tmp");
         assert!(matches!(decision, Decision::Deny(_)));
     }
 
     #[test]
     fn test_docker_privileged() {
-        let decision = process_command(
-            "docker run --privileged ubuntu",
-            &default_config(),
-            "/tmp",
-        );
+        let decision = process_command("docker run --privileged ubuntu", &default_config(), "/tmp");
         assert!(matches!(decision, Decision::Deny(_)));
     }
 
@@ -271,8 +261,7 @@ mod tests {
 
     #[test]
     fn test_docker_build() {
-        let decision =
-            process_command("docker build -t myapp .", &default_config(), "/tmp");
+        let decision = process_command("docker build -t myapp .", &default_config(), "/tmp");
         assert_eq!(decision, Decision::Allow);
     }
 

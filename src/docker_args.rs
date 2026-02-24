@@ -92,21 +92,17 @@ pub struct DockerCommand {
     pub host_paths: Vec<String>,
 }
 
-static MOUNT_TYPE_BIND_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?:^|,)type=bind(?:,|$)").unwrap()
-});
+static MOUNT_TYPE_BIND_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?:^|,)type=bind(?:,|$)").unwrap());
 
-static MOUNT_SOURCE_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?:^|,)(?:source|src)=([^,]+)").unwrap()
-});
+static MOUNT_SOURCE_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?:^|,)(?:source|src)=([^,]+)").unwrap());
 
-static MOUNT_TARGET_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?:^|,)(?:target|dst|destination)=([^,]+)").unwrap()
-});
+static MOUNT_TARGET_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?:^|,)(?:target|dst|destination)=([^,]+)").unwrap());
 
-static MOUNT_READONLY_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?:^|,)(?:readonly|ro)(?:=true)?(?:,|$)").unwrap()
-});
+static MOUNT_READONLY_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?:^|,)(?:readonly|ro)(?:=true)?(?:,|$)").unwrap());
 
 /// -v / --volume フラグの値からバインドマウントをパースする
 fn parse_volume_flag(value: &str) -> Option<BindMount> {
@@ -571,9 +567,7 @@ fn parse_compose_args(args: &[&str], start: usize, cmd: &mut DockerCommand) {
                 i += 1;
                 // compose run のフラグから -v を抽出
                 while i < args.len() {
-                    if (args[i] == "-v" || args[i] == "--volume")
-                        && i + 1 < args.len()
-                    {
+                    if (args[i] == "-v" || args[i] == "--volume") && i + 1 < args.len() {
                         if let Some(bm) = parse_volume_flag(args[i + 1]) {
                             cmd.bind_mounts.push(bm);
                         }
@@ -692,8 +686,7 @@ mod tests {
 
     #[test]
     fn test_parse_mount_bind() {
-        let bm =
-            parse_mount_flag("type=bind,source=/host/path,target=/container/path").unwrap();
+        let bm = parse_mount_flag("type=bind,source=/host/path,target=/container/path").unwrap();
         assert_eq!(bm.host_path, "/host/path");
         assert_eq!(bm.container_path, "/container/path");
         assert!(!bm.read_only);
@@ -701,8 +694,7 @@ mod tests {
 
     #[test]
     fn test_parse_mount_readonly() {
-        let bm =
-            parse_mount_flag("type=bind,source=/host,target=/container,readonly").unwrap();
+        let bm = parse_mount_flag("type=bind,source=/host,target=/container,readonly").unwrap();
         assert!(bm.read_only);
     }
 
@@ -771,15 +763,12 @@ mod tests {
         ];
         let cmd = parse_docker_args(&args);
         assert_eq!(cmd.dangerous_flags.len(), 4);
-        assert!(cmd
-            .dangerous_flags
-            .contains(&DangerousFlag::Privileged));
-        assert!(cmd
-            .dangerous_flags
-            .contains(&DangerousFlag::CapAdd("SYS_ADMIN".to_string())));
-        assert!(cmd
-            .dangerous_flags
-            .contains(&DangerousFlag::PidHost));
+        assert!(cmd.dangerous_flags.contains(&DangerousFlag::Privileged));
+        assert!(
+            cmd.dangerous_flags
+                .contains(&DangerousFlag::CapAdd("SYS_ADMIN".to_string()))
+        );
+        assert!(cmd.dangerous_flags.contains(&DangerousFlag::PidHost));
     }
 
     #[test]
@@ -861,14 +850,13 @@ mod tests {
     #[test]
     fn test_parse_mount_no_type() {
         // type 指定なしの --mount は volume として無視
-        let args = vec![
-            "run",
-            "--mount",
-            "source=/etc,target=/data",
-            "ubuntu",
-        ];
+        let args = vec!["run", "--mount", "source=/etc,target=/data", "ubuntu"];
         let cmd = parse_docker_args(&args);
-        assert_eq!(cmd.bind_mounts.len(), 0, "mount without type=bind should be ignored");
+        assert_eq!(
+            cmd.bind_mounts.len(),
+            0,
+            "mount without type=bind should be ignored"
+        );
     }
 
     #[test]
@@ -906,12 +894,7 @@ mod tests {
 
     #[test]
     fn test_parse_mixed_volumes_deny_priority() {
-        let args = vec![
-            "run",
-            "-v", "/etc:/data",
-            "-v", "~/src:/app",
-            "ubuntu",
-        ];
+        let args = vec!["run", "-v", "/etc:/data", "-v", "~/src:/app", "ubuntu"];
         let cmd = parse_docker_args(&args);
         assert_eq!(cmd.bind_mounts.len(), 2);
         // 最初が /etc (deny対象)、次が ~/src

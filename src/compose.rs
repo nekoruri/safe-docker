@@ -109,10 +109,7 @@ fn extract_service_volumes(
 }
 
 /// サービス定義から危険な設定を抽出
-fn extract_service_dangerous_settings(
-    service: &serde_yml::Value,
-    flags: &mut Vec<DangerousFlag>,
-) {
+fn extract_service_dangerous_settings(service: &serde_yml::Value, flags: &mut Vec<DangerousFlag>) {
     // privileged: true
     if service
         .get("privileged")
@@ -209,10 +206,7 @@ fn parse_short_volume(volume_str: &str, compose_dir: &Path) -> Option<BindMount>
 }
 
 /// Long syntax のボリュームをパース
-fn parse_long_volume(
-    mapping: &serde_yml::Mapping,
-    compose_dir: &Path,
-) -> Option<BindMount> {
+fn parse_long_volume(mapping: &serde_yml::Mapping, compose_dir: &Path) -> Option<BindMount> {
     let volume_type = mapping
         .get(serde_yml::Value::String("type".to_string()))
         .and_then(|v| v.as_str())
@@ -251,10 +245,7 @@ fn resolve_path(path: &str, compose_dir: &Path) -> String {
     }
 
     // 相対パスを compose_dir を基準に解決
-    compose_dir
-        .join(path)
-        .to_string_lossy()
-        .to_string()
+    compose_dir.join(path).to_string_lossy().to_string()
 }
 
 /// .env ファイルを読み込む
@@ -305,10 +296,7 @@ fn expand_variables(content: &str, vars: &HashMap<String, String>) -> String {
 
                 // ${VAR:-default} のパース
                 let (var_name, default_value) = if let Some(pos) = inner.find(":-") {
-                    (
-                        inner[..pos].to_string(),
-                        Some(inner[pos + 2..].to_string()),
-                    )
+                    (inner[..pos].to_string(), Some(inner[pos + 2..].to_string()))
                 } else {
                     (inner, None)
                 };
@@ -318,7 +306,10 @@ fn expand_variables(content: &str, vars: &HashMap<String, String>) -> String {
                 } else if let Some(default) = default_value {
                     result.push_str(&default);
                 }
-            } else if chars.peek().is_some_and(|c| c.is_ascii_alphanumeric() || *c == '_') {
+            } else if chars
+                .peek()
+                .is_some_and(|c| c.is_ascii_alphanumeric() || *c == '_')
+            {
                 let mut var_name = String::new();
                 while chars
                     .peek()
@@ -379,15 +370,9 @@ mod tests {
         vars.insert("HOME".to_string(), "/home/user".to_string());
         vars.insert("APP_DIR".to_string(), "/opt/app".to_string());
 
-        assert_eq!(
-            expand_variables("${HOME}/data", &vars),
-            "/home/user/data"
-        );
+        assert_eq!(expand_variables("${HOME}/data", &vars), "/home/user/data");
         assert_eq!(expand_variables("$HOME/data", &vars), "/home/user/data");
-        assert_eq!(
-            expand_variables("${MISSING:-/default}", &vars),
-            "/default"
-        );
+        assert_eq!(expand_variables("${MISSING:-/default}", &vars), "/default");
         assert_eq!(expand_variables("no vars here", &vars), "no vars here");
     }
 
@@ -456,11 +441,12 @@ services:
         std::fs::write(dir.path().join("docker-compose.yml"), "version: '3'").unwrap();
         let path = find_compose_file(None, dir.path().to_str().unwrap());
         assert!(path.is_some());
-        assert!(path
-            .unwrap()
-            .to_str()
-            .unwrap()
-            .ends_with("docker-compose.yml"));
+        assert!(
+            path.unwrap()
+                .to_str()
+                .unwrap()
+                .ends_with("docker-compose.yml")
+        );
     }
 
     #[test]

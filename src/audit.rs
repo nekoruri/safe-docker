@@ -82,11 +82,10 @@ pub fn build_event(
     let docker_subcommand = collector.docker_subcommands.first().cloned();
     let docker_image = collector.images.first().cloned();
 
-    let host_name = gethostname::gethostname()
-        .to_string_lossy()
-        .to_string();
+    let host_name = gethostname::gethostname().to_string_lossy().to_string();
 
-    let environment = std::env::var("SAFE_DOCKER_ENV").unwrap_or_else(|_| "development".to_string());
+    let environment =
+        std::env::var("SAFE_DOCKER_ENV").unwrap_or_else(|_| "development".to_string());
 
     AuditEvent {
         timestamp_unix_nano,
@@ -165,9 +164,9 @@ fn write_otlp(event: &AuditEvent, path: &str) {
 
     // Severity マッピング
     let (severity_number, severity_text) = match event.decision.as_str() {
-        "allow" => (9, "INFO"),   // SEVERITY_NUMBER_INFO
-        "ask" => (13, "WARN"),    // SEVERITY_NUMBER_WARN
-        "deny" => (17, "ERROR"),  // SEVERITY_NUMBER_ERROR
+        "allow" => (9, "INFO"),  // SEVERITY_NUMBER_INFO
+        "ask" => (13, "WARN"),   // SEVERITY_NUMBER_WARN
+        "deny" => (17, "ERROR"), // SEVERITY_NUMBER_ERROR
         _ => (0, "UNSPECIFIED"),
     };
 
@@ -191,7 +190,10 @@ fn write_otlp(event: &AuditEvent, path: &str) {
         attributes.push(kv_string_array("docker.bind_mounts", &event.bind_mounts));
     }
     if !event.dangerous_flags.is_empty() {
-        attributes.push(kv_string_array("docker.dangerous_flags", &event.dangerous_flags));
+        attributes.push(kv_string_array(
+            "docker.dangerous_flags",
+            &event.dangerous_flags,
+        ));
     }
     attributes.push(kv_int("process.pid", event.pid as i64));
 
@@ -398,10 +400,7 @@ mod tests {
         );
 
         assert_eq!(event.decision, "deny");
-        assert_eq!(
-            event.reason.as_deref(),
-            Some("--privileged is not allowed")
-        );
+        assert_eq!(event.reason.as_deref(), Some("--privileged is not allowed"));
         assert!(event.session_id.is_none());
     }
 
@@ -532,8 +531,7 @@ mod tests {
         let path_str = path.to_str().unwrap();
 
         let collector = AuditCollector::new();
-        let event1 =
-            build_event("docker run ubuntu", "allow", None, &collector, None, "/tmp");
+        let event1 = build_event("docker run ubuntu", "allow", None, &collector, None, "/tmp");
         let event2 = build_event(
             "docker run --privileged ubuntu",
             "deny",
@@ -672,10 +670,7 @@ mod tests {
                 .iter()
                 .find(|kv| kv["key"] == "service.name")
                 .unwrap();
-            assert_eq!(
-                service_name["value"]["stringValue"],
-                "safe-docker"
-            );
+            assert_eq!(service_name["value"]["stringValue"], "safe-docker");
         }
 
         #[test]
@@ -691,14 +686,7 @@ mod tests {
             };
 
             let collector = AuditCollector::new();
-            let event = build_event(
-                "docker run alpine",
-                "allow",
-                None,
-                &collector,
-                None,
-                "/tmp",
-            );
+            let event = build_event("docker run alpine", "allow", None, &collector, None, "/tmp");
 
             emit(&event, &config);
 
