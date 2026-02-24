@@ -3,6 +3,41 @@ use std::path::PathBuf;
 
 use crate::error::{Result, SafeDockerError};
 
+/// 監査ログの出力形式
+#[derive(Debug, Clone, Default, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum AuditFormat {
+    #[default]
+    Jsonl,
+    Otlp,
+    Both,
+}
+
+/// 監査ログ設定
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct AuditConfig {
+    /// 監査ログの有効/無効 (環境変数 SAFE_DOCKER_AUDIT=1 でも有効化可能)
+    pub enabled: bool,
+    /// 出力形式
+    pub format: AuditFormat,
+    /// JSONL ファイルのパス
+    pub jsonl_path: String,
+    /// OTLP JSON Lines ファイルのパス (feature gate しない: TOML パース互換性のため)
+    pub otlp_path: String,
+}
+
+impl Default for AuditConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            format: AuditFormat::Jsonl,
+            jsonl_path: "~/.local/share/safe-docker/audit.jsonl".to_string(),
+            otlp_path: "~/.local/share/safe-docker/audit-otlp.jsonl".to_string(),
+        }
+    }
+}
+
 /// 設定ファイルのデフォルトパス
 fn default_config_path() -> PathBuf {
     dirs::config_dir()
@@ -64,6 +99,10 @@ pub struct Config {
 
     /// Docker ソケットマウントの禁止
     pub block_docker_socket: bool,
+
+    /// 監査ログ設定
+    #[serde(default)]
+    pub audit: AuditConfig,
 }
 
 impl Default for Config {
@@ -75,6 +114,7 @@ impl Default for Config {
             blocked_capabilities: default_blocked_capabilities(),
             allowed_images: Vec::new(),
             block_docker_socket: true,
+            audit: AuditConfig::default(),
         }
     }
 }
@@ -280,5 +320,65 @@ mod tests {
         // block_docker_socket が false の場合、設定レベルではチェックしない
         // (path_validator で使われるが、config 自体のテスト)
         assert!(!config.block_docker_socket);
+    }
+
+    // --- AuditConfig テスト ---
+
+    #[test]
+    fn test_audit_config_default() {
+        let config = AuditConfig::default();
+        assert!(!config.enabled);
+        assert_eq!(config.format, AuditFormat::Jsonl);
+        assert_eq!(config.jsonl_path, "~/.local/share/safe-docker/audit.jsonl");
+        assert_eq!(
+            config.otlp_path,
+            "~/.local/share/safe-docker/audit-otlp.jsonl"
+        );
+    }
+
+    #[test]
+    fn test_audit_config_in_default_config() {
+        let config = Config::default();
+        assert!(!config.audit.enabled);
+        assert_eq!(config.audit.format, AuditFormat::Jsonl);
+    }
+
+    #[test]
+    fn test_parse_audit_config() {
+        let toml_str = r#"
+            [audit]
+            enabled = true
+            format = "both"
+            jsonl_path = "/tmp/audit.jsonl"
+            otlp_path = "/tmp/audit-otlp.jsonl"
+        "#;
+        let config: Config = toml::from_str(toml_str).unwrap();
+        assert!(config.audit.enabled);
+        assert_eq!(config.audit.format, AuditFormat::Both);
+        assert_eq!(config.audit.jsonl_path, "/tmp/audit.jsonl");
+        assert_eq!(config.audit.otlp_path, "/tmp/audit-otlp.jsonl");
+    }
+
+    #[test]
+    fn test_parse_audit_config_otlp_format() {
+        let toml_str = r#"
+            [audit]
+            enabled = true
+            format = "otlp"
+        "#;
+        let config: Config = toml::from_str(toml_str).unwrap();
+        assert!(config.audit.enabled);
+        assert_eq!(config.audit.format, AuditFormat::Otlp);
+    }
+
+    #[test]
+    fn test_parse_config_without_audit_section() {
+        let toml_str = r#"
+            allowed_paths = ["/tmp"]
+        "#;
+        let config: Config = toml::from_str(toml_str).unwrap();
+        // audit セクションが省略された場合はデフォルト
+        assert!(!config.audit.enabled);
+        assert_eq!(config.audit.format, AuditFormat::Jsonl);
     }
 }

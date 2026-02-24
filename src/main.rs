@@ -1,3 +1,4 @@
+pub mod audit;
 pub mod compose;
 pub mod config;
 pub mod docker_args;
@@ -62,15 +63,54 @@ fn main() {
         }
     };
 
-    // コマンドを処理
-    let decision = process_command(&command, &config, &cwd);
+    // 監査ログの有効判定
+    let audit_enabled = audit::is_enabled(&config.audit);
+    let mut collector = if audit_enabled {
+        Some(audit::AuditCollector::new())
+    } else {
+        None
+    };
 
-    // 結果出力
+    // コマンドを処理
+    let decision = process_command_with_audit(&command, &config, &cwd, collector.as_mut());
+
+    // 結果出力 (★ここで stdout に hook レスポンス)
     hook::output_decision(&decision);
+
+    // 監査ログ出力 (★レスポンス後にファイル I/O)
+    if audit_enabled
+        && let Some(ref collector) = collector
+    {
+        let (decision_str, reason) = match &decision {
+            hook::Decision::Allow => ("allow", None),
+            hook::Decision::Deny(r) => ("deny", Some(r.as_str())),
+            hook::Decision::Ask(r) => ("ask", Some(r.as_str())),
+        };
+
+        let event = audit::build_event(
+            &command,
+            decision_str,
+            reason,
+            collector,
+            input.session_id.as_deref(),
+            &cwd,
+        );
+        audit::emit(&event, &config.audit);
+    }
 }
 
-/// コマンド文字列を解析して最終的な Decision を返す
+/// コマンド文字列を解析して最終的な Decision を返す (既存 API 互換)
 pub fn process_command(command: &str, config: &config::Config, cwd: &str) -> Decision {
+    process_command_with_audit(command, config, cwd, None)
+}
+
+/// コマンド文字列を解析して最終的な Decision を返す (監査コレクター付き)
+pub fn process_command_with_audit(
+    command: &str,
+    config: &config::Config,
+    cwd: &str,
+    mut collector: Option<&mut audit::AuditCollector>,
+) -> Decision {
     // シェルコマンドをセグメントに分割
     let segments = shell::split_commands(command);
 
@@ -100,6 +140,11 @@ pub fn process_command(command: &str, config: &config::Config, cwd: &str) -> Dec
         // docker 引数をパース
         let args_ref: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
         let docker_cmd = docker_args::parse_docker_args(&args_ref);
+
+        // 監査コレクターにメタデータを記録
+        if let Some(ref mut c) = collector {
+            c.record_docker_command(&docker_cmd);
+        }
 
         // ポリシー評価
         match policy::evaluate(&docker_cmd, config, cwd) {
