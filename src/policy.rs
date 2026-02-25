@@ -3,6 +3,19 @@ use crate::docker_args::{DangerousFlag, DockerCommand, DockerSubcommand};
 use crate::hook::Decision;
 use crate::path_validator::{self, PathVerdict};
 
+/// 危険な --security-opt 値かどうか判定
+fn is_dangerous_security_opt(opt: &str) -> bool {
+    // = 区切りと : 区切りの両方に対応
+    opt.contains("apparmor=unconfined")
+        || opt.contains("apparmor:unconfined")
+        || opt.contains("seccomp=unconfined")
+        || opt.contains("seccomp:unconfined")
+        || opt.contains("systempaths=unconfined")
+        || opt.contains("systempaths:unconfined")
+        || opt.contains("no-new-privileges=false")
+        || opt.contains("no-new-privileges:false")
+}
+
 /// Docker コマンドに対してポリシーを適用し、最終的な Decision を返す
 pub fn evaluate(cmd: &DockerCommand, config: &Config, cwd: &str) -> Decision {
     let mut deny_reasons = Vec::new();
@@ -20,12 +33,7 @@ pub fn evaluate(cmd: &DockerCommand, config: &Config, cwd: &str) -> Decision {
                 }
             }
             DangerousFlag::SecurityOpt(opt) => {
-                // = 区切りと : 区切りの両方に対応
-                if opt.contains("apparmor=unconfined")
-                    || opt.contains("apparmor:unconfined")
-                    || opt.contains("seccomp=unconfined")
-                    || opt.contains("seccomp:unconfined")
-                {
+                if is_dangerous_security_opt(opt) {
                     deny_reasons.push(format!("--security-opt {} is not allowed", opt));
                 }
             }
@@ -89,11 +97,7 @@ pub fn evaluate(cmd: &DockerCommand, config: &Config, cwd: &str) -> Decision {
                 }
             }
             DangerousFlag::SecurityOpt(opt) => {
-                if opt.contains("apparmor=unconfined")
-                    || opt.contains("apparmor:unconfined")
-                    || opt.contains("seccomp=unconfined")
-                    || opt.contains("seccomp:unconfined")
-                {
+                if is_dangerous_security_opt(opt) {
                     deny_reasons.push(format!("Compose: security_opt {} is not allowed", opt));
                 }
             }
@@ -476,11 +480,82 @@ mod tests {
             host_paths: vec![],
         };
         let decision = evaluate(&cmd, &config, "/tmp");
-        // no-new-privileges は deny 対象ではない
+        // no-new-privileges=false はセキュリティ制限の無効化なので deny
+        assert!(
+            matches!(decision, Decision::Deny(_)),
+            "no-new-privileges=false should be denied"
+        );
+    }
+
+    #[test]
+    fn test_evaluate_security_opt_systempaths_unconfined() {
+        let config = Config::default();
+        let cmd = DockerCommand {
+            subcommand: DockerSubcommand::Run,
+            bind_mounts: vec![],
+            dangerous_flags: vec![DangerousFlag::SecurityOpt(
+                "systempaths=unconfined".to_string(),
+            )],
+            compose_file: None,
+            image: Some("ubuntu".to_string()),
+            host_paths: vec![],
+        };
+        let decision = evaluate(&cmd, &config, "/tmp");
+        assert!(matches!(decision, Decision::Deny(_)));
+    }
+
+    #[test]
+    fn test_evaluate_security_opt_systempaths_colon() {
+        let config = Config::default();
+        let cmd = DockerCommand {
+            subcommand: DockerSubcommand::Run,
+            bind_mounts: vec![],
+            dangerous_flags: vec![DangerousFlag::SecurityOpt(
+                "systempaths:unconfined".to_string(),
+            )],
+            compose_file: None,
+            image: Some("ubuntu".to_string()),
+            host_paths: vec![],
+        };
+        let decision = evaluate(&cmd, &config, "/tmp");
+        assert!(matches!(decision, Decision::Deny(_)));
+    }
+
+    #[test]
+    fn test_evaluate_security_opt_no_new_privileges_colon_false() {
+        let config = Config::default();
+        let cmd = DockerCommand {
+            subcommand: DockerSubcommand::Run,
+            bind_mounts: vec![],
+            dangerous_flags: vec![DangerousFlag::SecurityOpt(
+                "no-new-privileges:false".to_string(),
+            )],
+            compose_file: None,
+            image: Some("ubuntu".to_string()),
+            host_paths: vec![],
+        };
+        let decision = evaluate(&cmd, &config, "/tmp");
+        assert!(matches!(decision, Decision::Deny(_)));
+    }
+
+    #[test]
+    fn test_evaluate_security_opt_no_new_privileges_true_allows() {
+        let config = Config::default();
+        let cmd = DockerCommand {
+            subcommand: DockerSubcommand::Run,
+            bind_mounts: vec![],
+            dangerous_flags: vec![DangerousFlag::SecurityOpt(
+                "no-new-privileges".to_string(),
+            )],
+            compose_file: None,
+            image: Some("ubuntu".to_string()),
+            host_paths: vec![],
+        };
+        let decision = evaluate(&cmd, &config, "/tmp");
         assert_eq!(
             decision,
             Decision::Allow,
-            "no-new-privileges should not be denied"
+            "no-new-privileges (without =false) should be allowed"
         );
     }
 

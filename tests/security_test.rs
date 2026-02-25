@@ -204,7 +204,56 @@ fn test_deny_double_slash_path() {
     assert_deny(&stdout, "double-slash path //etc//passwd");
 }
 
-// --- 新規: 名前空間分離フラグのテスト ---
+// --- docker buildx build テスト ---
+
+#[test]
+fn test_deny_buildx_build_outside_home() {
+    let (stdout, exit_code) = run_hook(&make_bash_input("docker buildx build -t myapp /etc"));
+    assert_eq!(exit_code, 0);
+    assert_deny(&stdout, "docker buildx build with context /etc");
+}
+
+// --- docker exec テスト ---
+
+#[test]
+fn test_deny_docker_exec_privileged() {
+    let (stdout, exit_code) = run_hook(&make_bash_input(
+        "docker exec --privileged mycontainer bash",
+    ));
+    assert_eq!(exit_code, 0);
+    assert_deny(&stdout, "docker exec --privileged");
+}
+
+// --- security-opt 拡充テスト ---
+
+#[test]
+fn test_deny_security_opt_systempaths_unconfined() {
+    let (stdout, exit_code) = run_hook(&make_bash_input(
+        "docker run --security-opt systempaths=unconfined ubuntu",
+    ));
+    assert_eq!(exit_code, 0);
+    assert_deny(&stdout, "--security-opt systempaths=unconfined");
+}
+
+#[test]
+fn test_deny_security_opt_no_new_privileges_false() {
+    let (stdout, exit_code) = run_hook(&make_bash_input(
+        "docker run --security-opt no-new-privileges=false ubuntu",
+    ));
+    assert_eq!(exit_code, 0);
+    assert_deny(&stdout, "--security-opt no-new-privileges=false");
+}
+
+#[test]
+fn test_deny_security_opt_no_new_privileges_colon_false() {
+    let (stdout, exit_code) = run_hook(&make_bash_input(
+        "docker run --security-opt no-new-privileges:false ubuntu",
+    ));
+    assert_eq!(exit_code, 0);
+    assert_deny(&stdout, "--security-opt no-new-privileges:false");
+}
+
+// --- 名前空間分離フラグのテスト ---
 
 #[test]
 fn test_deny_userns_host() {

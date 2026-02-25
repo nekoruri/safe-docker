@@ -8,6 +8,7 @@ pub enum DockerSubcommand {
     Create,
     Build,
     Cp,
+    Exec,
     ComposeUp,
     ComposeRun,
     ComposeCreate,
@@ -22,6 +23,7 @@ impl std::fmt::Display for DockerSubcommand {
             Self::Create => write!(f, "create"),
             Self::Build => write!(f, "build"),
             Self::Cp => write!(f, "cp"),
+            Self::Exec => write!(f, "exec"),
             Self::ComposeUp => write!(f, "compose-up"),
             Self::ComposeRun => write!(f, "compose-run"),
             Self::ComposeCreate => write!(f, "compose-create"),
@@ -192,7 +194,8 @@ pub fn parse_docker_args(args: &[&str]) -> DockerCommand {
                 break;
             }
             "run" | "create" | "build" | "cp" | "exec" | "start" | "stop" | "pull" | "push"
-            | "images" | "ps" | "logs" | "inspect" | "rm" | "rmi" | "network" | "volume" => {
+            | "images" | "ps" | "logs" | "inspect" | "rm" | "rmi" | "network" | "volume"
+            | "buildx" => {
                 found_subcommand = true;
                 break;
             }
@@ -218,6 +221,18 @@ pub fn parse_docker_args(args: &[&str]) -> DockerCommand {
         "create" => DockerSubcommand::Create,
         "build" => DockerSubcommand::Build,
         "cp" => DockerSubcommand::Cp,
+        "exec" => DockerSubcommand::Exec,
+        "buildx" => {
+            i += 1; // "buildx" を消費
+            if i < args.len() && args[i] == "build" {
+                DockerSubcommand::Build
+            } else {
+                DockerSubcommand::Other(format!(
+                    "buildx-{}",
+                    args.get(i).unwrap_or(&"unknown")
+                ))
+            }
+        }
         _ => DockerSubcommand::Other(args[i].to_string()),
     };
 
@@ -233,6 +248,12 @@ pub fn parse_docker_args(args: &[&str]) -> DockerCommand {
     // docker build のパース: docker build [OPTIONS] PATH
     if cmd.subcommand == DockerSubcommand::Build {
         parse_build_args(args, i, &mut cmd);
+        return cmd;
+    }
+
+    // docker exec のパース: docker exec [OPTIONS] CONTAINER COMMAND
+    if cmd.subcommand == DockerSubcommand::Exec {
+        parse_exec_args(args, i, &mut cmd);
         return cmd;
     }
 
@@ -537,6 +558,49 @@ fn parse_build_args(args: &[&str], start: usize, cmd: &mut DockerCommand) {
     }
 }
 
+/// docker exec 引数をパース: docker exec [OPTIONS] CONTAINER COMMAND [ARG...]
+fn parse_exec_args(args: &[&str], start: usize, cmd: &mut DockerCommand) {
+    let mut i = start;
+
+    while i < args.len() {
+        let arg = args[i];
+
+        // --privileged
+        if arg == "--privileged" {
+            cmd.dangerous_flags.push(DangerousFlag::Privileged);
+            i += 1;
+            continue;
+        }
+
+        // 値付きオプション (-e, --env, -u, --user, -w, --workdir)
+        if matches!(
+            arg,
+            "-e" | "--env" | "-u" | "--user" | "-w" | "--workdir"
+        ) {
+            i += 2;
+            continue;
+        }
+
+        // = 付きオプションをスキップ
+        if arg.starts_with("--env=")
+            || arg.starts_with("--user=")
+            || arg.starts_with("--workdir=")
+        {
+            i += 1;
+            continue;
+        }
+
+        // ブーリアンフラグ (-d, --detach, -i, --interactive, -t, --tty)
+        if arg.starts_with('-') {
+            i += 1;
+            continue;
+        }
+
+        // 非フラグ引数 = コンテナ名 → 以降はコンテナ内コマンドなので終了
+        break;
+    }
+}
+
 /// docker compose 引数をパース
 fn parse_compose_args(args: &[&str], start: usize, cmd: &mut DockerCommand) {
     let mut i = start;
@@ -646,6 +710,10 @@ fn is_flag_with_value(arg: &str) -> bool {
             | "--storage-opt"
             | "--sysctl"
             | "--gpus"
+            | "--attach"
+            | "-a"
+            | "--link"
+            | "--volume-driver"
     )
 }
 
@@ -966,5 +1034,100 @@ mod tests {
         let args = vec!["run", "--pid", "host", "ubuntu"];
         let cmd = parse_docker_args(&args);
         assert!(cmd.dangerous_flags.contains(&DangerousFlag::PidHost));
+    }
+
+    // --- A4: is_flag_with_value 漏れ修正テスト ---
+
+    #[test]
+    fn test_is_flag_with_value_attach() {
+        assert!(is_flag_with_value("--attach"));
+        assert!(is_flag_with_value("-a"));
+    }
+
+    #[test]
+    fn test_is_flag_with_value_link() {
+        assert!(is_flag_with_value("--link"));
+    }
+
+    #[test]
+    fn test_is_flag_with_value_volume_driver() {
+        assert!(is_flag_with_value("--volume-driver"));
+    }
+
+    #[test]
+    fn test_parse_attach_does_not_eat_image() {
+        let args = vec!["run", "-a", "stdout", "--privileged", "ubuntu"];
+        let cmd = parse_docker_args(&args);
+        assert!(
+            cmd.dangerous_flags.contains(&DangerousFlag::Privileged),
+            "--privileged should be detected after -a stdout"
+        );
+        assert_eq!(cmd.image, Some("ubuntu".to_string()));
+    }
+
+    #[test]
+    fn test_parse_link_does_not_eat_image() {
+        let args = vec!["run", "--link", "db:db", "--privileged", "ubuntu"];
+        let cmd = parse_docker_args(&args);
+        assert!(cmd.dangerous_flags.contains(&DangerousFlag::Privileged));
+    }
+
+    // --- A1: docker buildx build テスト ---
+
+    #[test]
+    fn test_parse_buildx_build() {
+        let args = vec!["buildx", "build", "-t", "myapp", "."];
+        let cmd = parse_docker_args(&args);
+        assert_eq!(cmd.subcommand, DockerSubcommand::Build);
+        assert_eq!(cmd.host_paths, vec!["."]);
+    }
+
+    #[test]
+    fn test_parse_buildx_build_with_platform() {
+        let args = vec!["buildx", "build", "-t", "myapp", "--platform", "linux/amd64", "/etc"];
+        let cmd = parse_docker_args(&args);
+        assert_eq!(cmd.subcommand, DockerSubcommand::Build);
+        assert_eq!(cmd.host_paths, vec!["/etc"]);
+    }
+
+    #[test]
+    fn test_parse_buildx_non_build() {
+        let args = vec!["buildx", "inspect"];
+        let cmd = parse_docker_args(&args);
+        assert!(matches!(cmd.subcommand, DockerSubcommand::Other(_)));
+    }
+
+    // --- A2: docker exec テスト ---
+
+    #[test]
+    fn test_parse_docker_exec_privileged() {
+        let args = vec!["exec", "--privileged", "mycontainer", "bash"];
+        let cmd = parse_docker_args(&args);
+        assert_eq!(cmd.subcommand, DockerSubcommand::Exec);
+        assert!(cmd.dangerous_flags.contains(&DangerousFlag::Privileged));
+    }
+
+    #[test]
+    fn test_parse_docker_exec_no_flags() {
+        let args = vec!["exec", "mycontainer", "ls", "-la"];
+        let cmd = parse_docker_args(&args);
+        assert_eq!(cmd.subcommand, DockerSubcommand::Exec);
+        assert!(cmd.dangerous_flags.is_empty());
+    }
+
+    #[test]
+    fn test_parse_docker_exec_with_env() {
+        let args = vec!["exec", "-e", "FOO=bar", "--privileged", "mycontainer", "bash"];
+        let cmd = parse_docker_args(&args);
+        assert_eq!(cmd.subcommand, DockerSubcommand::Exec);
+        assert!(cmd.dangerous_flags.contains(&DangerousFlag::Privileged));
+    }
+
+    #[test]
+    fn test_parse_docker_exec_interactive_tty() {
+        let args = vec!["exec", "-it", "mycontainer", "bash"];
+        let cmd = parse_docker_args(&args);
+        assert_eq!(cmd.subcommand, DockerSubcommand::Exec);
+        assert!(cmd.dangerous_flags.is_empty());
     }
 }
