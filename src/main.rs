@@ -107,17 +107,18 @@ fn detect_mode(args: &[String]) -> RunMode {
 fn is_docker_help_request(args: &[String]) -> bool {
     // args[1] が docker サブコマンドや docker 引数の場合
     args.len() > 2
-        && args.get(1).is_some_and(|a| {
-            !a.starts_with('-')
-                || a == "--help"
-                || a == "-h"
-        })
+        && args
+            .get(1)
+            .is_some_and(|a| !a.starts_with('-') || a == "--help" || a == "-h")
         && args.iter().skip(2).any(|a| a == "--help" || a == "-h")
 }
 
 /// ヘルプメッセージを表示
 fn print_help() {
-    eprintln!("safe-docker {} - Safe Docker command wrapper", env!("CARGO_PKG_VERSION"));
+    eprintln!(
+        "safe-docker {} - Safe Docker command wrapper",
+        env!("CARGO_PKG_VERSION")
+    );
     eprintln!();
     eprintln!("USAGE:");
     eprintln!("  safe-docker [OPTIONS] <docker-args>...     Wrapper mode");
@@ -147,9 +148,7 @@ fn print_help() {
 
 /// --key value 形式のオプションを args から抽出する
 fn extract_option(args: &[String], key: &str) -> Option<String> {
-    args.windows(2)
-        .find(|w| w[0] == key)
-        .map(|w| w[1].clone())
+    args.windows(2).find(|w| w[0] == key).map(|w| w[1].clone())
 }
 
 /// --key value 形式のオプションを args から除去する

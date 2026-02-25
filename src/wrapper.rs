@@ -75,7 +75,15 @@ pub fn run(args: &[String], config: &Config) -> i32 {
             Decision::Ask(r) => ("ask", Some(r.as_str())),
         };
 
-        let event = audit::build_event(&command_str, decision_str, reason, collector, None, &cwd, "wrapper");
+        let event = audit::build_event(
+            &command_str,
+            decision_str,
+            reason,
+            collector,
+            None,
+            &cwd,
+            "wrapper",
+        );
         audit::emit(&event, &config.audit);
     }
 
@@ -174,7 +182,9 @@ fn handle_ask(reason: &str, docker_args: &[String], config: &Config, verbose: bo
                 exec_docker(&docker_path, docker_args); // never returns
             }
             NonInteractiveAsk::Deny => {
-                eprintln!("[safe-docker] Non-interactive: blocked (set SAFE_DOCKER_ASK=allow to override)");
+                eprintln!(
+                    "[safe-docker] Non-interactive: blocked (set SAFE_DOCKER_ASK=allow to override)"
+                );
                 1
             }
         }

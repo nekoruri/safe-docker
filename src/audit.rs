@@ -417,7 +417,15 @@ mod tests {
         let path_str = path.to_str().unwrap();
 
         let collector = AuditCollector::new();
-        let event = build_event("docker ps", "allow", None, &collector, None, "/tmp", "wrapper");
+        let event = build_event(
+            "docker ps",
+            "allow",
+            None,
+            &collector,
+            None,
+            "/tmp",
+            "wrapper",
+        );
 
         write_jsonl(&event, path_str);
 
@@ -551,7 +559,15 @@ mod tests {
         let path_str = path.to_str().unwrap();
 
         let collector = AuditCollector::new();
-        let event = build_event("docker run ubuntu", "allow", None, &collector, None, "/tmp", "hook");
+        let event = build_event(
+            "docker run ubuntu",
+            "allow",
+            None,
+            &collector,
+            None,
+            "/tmp",
+            "hook",
+        );
 
         write_jsonl(&event, path_str);
 
@@ -572,7 +588,15 @@ mod tests {
         let path_str = path.to_str().unwrap();
 
         let collector = AuditCollector::new();
-        let event1 = build_event("docker run ubuntu", "allow", None, &collector, None, "/tmp", "hook");
+        let event1 = build_event(
+            "docker run ubuntu",
+            "allow",
+            None,
+            &collector,
+            None,
+            "/tmp",
+            "hook",
+        );
         let event2 = build_event(
             "docker run --privileged ubuntu",
             "deny",
@@ -618,7 +642,15 @@ mod tests {
         };
 
         let collector = AuditCollector::new();
-        let event = build_event("docker run alpine", "allow", None, &collector, None, "/tmp", "hook");
+        let event = build_event(
+            "docker run alpine",
+            "allow",
+            None,
+            &collector,
+            None,
+            "/tmp",
+            "hook",
+        );
 
         emit(&event, &config);
 
@@ -729,7 +761,15 @@ mod tests {
             };
 
             let collector = AuditCollector::new();
-            let event = build_event("docker run alpine", "allow", None, &collector, None, "/tmp", "hook");
+            let event = build_event(
+                "docker run alpine",
+                "allow",
+                None,
+                &collector,
+                None,
+                "/tmp",
+                "hook",
+            );
 
             emit(&event, &config);
 

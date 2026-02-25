@@ -94,8 +94,7 @@ fn test_wrapper_deny_privileged() {
 
 #[test]
 fn test_wrapper_deny_cap_add() {
-    let (_stdout, stderr, exit_code) =
-        run_wrapper(&["run", "--cap-add", "SYS_ADMIN", "ubuntu"]);
+    let (_stdout, stderr, exit_code) = run_wrapper(&["run", "--cap-add", "SYS_ADMIN", "ubuntu"]);
     assert_eq!(exit_code, 1);
     assert!(stderr.contains("cap-add") || stderr.contains("SYS_ADMIN"));
 }
@@ -159,8 +158,7 @@ fn test_wrapper_dry_run_allow() {
 
 #[test]
 fn test_wrapper_dry_run_deny() {
-    let (_stdout, stderr, exit_code) =
-        run_wrapper(&["--dry-run", "run", "--privileged", "ubuntu"]);
+    let (_stdout, stderr, exit_code) = run_wrapper(&["--dry-run", "run", "--privileged", "ubuntu"]);
     assert_eq!(exit_code, 1);
     assert!(
         stderr.contains("Decision: deny"),
@@ -284,10 +282,8 @@ fn test_wrapper_deny_multiple_violations() {
 #[test]
 fn test_wrapper_custom_docker_path() {
     // /bin/true をモック docker として使用 → 成功するが出力は空
-    let (stdout, _stderr, exit_code) = run_wrapper_with_env(
-        &["ps"],
-        &[("SAFE_DOCKER_DOCKER_PATH", "/bin/true")],
-    );
+    let (stdout, _stderr, exit_code) =
+        run_wrapper_with_env(&["ps"], &[("SAFE_DOCKER_DOCKER_PATH", "/bin/true")]);
     assert_eq!(exit_code, 0);
     assert!(stdout.trim().is_empty());
 }
@@ -344,8 +340,7 @@ fn test_wrapper_deny_mount_type_bind() {
 
 #[test]
 fn test_wrapper_allow_tilde_mount() {
-    let (stdout, _stderr, exit_code) =
-        run_wrapper(&["run", "-v", "~/projects:/app", "ubuntu"]);
+    let (stdout, _stderr, exit_code) = run_wrapper(&["run", "-v", "~/projects:/app", "ubuntu"]);
     assert_eq!(exit_code, 0);
     assert!(stdout.contains("run"));
 }
@@ -354,10 +349,13 @@ fn test_wrapper_allow_tilde_mount() {
 
 #[test]
 fn test_wrapper_verbose_deny() {
-    let (_stdout, stderr, exit_code) =
-        run_wrapper(&["--verbose", "run", "--privileged", "ubuntu"]);
+    let (_stdout, stderr, exit_code) = run_wrapper(&["--verbose", "run", "--privileged", "ubuntu"]);
     assert_eq!(exit_code, 1);
-    assert!(stderr.contains("Tip:"), "Expected tip in verbose mode: {}", stderr);
+    assert!(
+        stderr.contains("Tip:"),
+        "Expected tip in verbose mode: {}",
+        stderr
+    );
 }
 
 // --- -v は docker の volume フラグとして処理される ---
@@ -365,8 +363,7 @@ fn test_wrapper_verbose_deny() {
 #[test]
 fn test_wrapper_v_flag_is_docker_volume() {
     // -v ~/projects:/app は docker の volume フラグ、safe-docker の --verbose ではない
-    let (stdout, _stderr, exit_code) =
-        run_wrapper(&["run", "-v", "~/projects:/app", "ubuntu"]);
+    let (stdout, _stderr, exit_code) = run_wrapper(&["run", "-v", "~/projects:/app", "ubuntu"]);
     assert_eq!(exit_code, 0);
     // -v がフィルタされずに docker に渡されることを確認
     assert!(
