@@ -25,7 +25,7 @@ fn main() {
     std::panic::set_hook(Box::new(move |info| {
         default_hook(info);
         hook::output_deny(&format!(
-            "[safe-docker] Internal error (panic). Blocking for safety: {}",
+            "[safe-docker] Internal error (panic). Blocking for safety. Please report this issue: {}",
             info
         ));
     }));
@@ -36,10 +36,15 @@ fn main() {
         Err(e) => {
             // 入力エラーは fail-safe (deny)
             // 巨大入力によるバイパスや不正な入力を防ぐ
-            hook::output_deny(&format!(
-                "[safe-docker] Failed to read input: {}. Blocking for safety.",
-                e
-            ));
+            let detail = match &e {
+                error::SafeDockerError::InputTooLarge(size) => {
+                    format!("input too large ({} bytes, max 256KB)", size)
+                }
+                error::SafeDockerError::Json(_) => "invalid JSON input".to_string(),
+                error::SafeDockerError::Io(_) => "failed to read stdin".to_string(),
+                _ => format!("{}", e),
+            };
+            hook::output_deny(&format!("[safe-docker] {}. Blocking for safety.", detail));
             return;
         }
     };
@@ -238,7 +243,7 @@ pub fn process_command_with_audit(
         // シェル間接実行 (eval, bash -c 等) の検出
         if shell::detect_shell_wrappers(segment) {
             all_deny_reasons.push(
-                "[safe-docker] Shell wrapper detected: indirect docker execution via eval/sh -c/bash -c is not allowed for security reasons".to_string()
+                "[safe-docker] Shell wrapper detected: indirect docker execution via eval/sh -c/bash -c is not allowed (run docker commands directly instead)".to_string()
             );
             continue;
         }
