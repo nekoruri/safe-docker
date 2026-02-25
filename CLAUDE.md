@@ -4,7 +4,10 @@
 
 ## プロジェクト概要
 
-safe-docker は、コーディングエージェントに **安全に Docker 操作権限を渡す**ための Claude Code PreToolUse hook（Rust 製）です。
+safe-docker は、コーディングエージェントや開発者に **安全に Docker 操作権限を渡す**ためのセキュリティツール（Rust 製）。2つの動作モードを持つ:
+
+- **Hook モード**: Claude Code PreToolUse hook として stdin/stdout の JSON プロトコルで動作
+- **Wrapper モード**: `docker` コマンドの直接置換として CLI 引数で動作
 
 ## 技術スタック
 
@@ -37,18 +40,21 @@ cargo bench
 
 ```
 src/
-├── main.rs            # エントリポイント、process_command()
-├── hook.rs            # stdin/stdout の JSON プロトコル、Decision 型
-├── shell.rs           # シェルコマンドのパース（パイプ/チェイン分割、間接実行検出）
-├── docker_args.rs     # Docker CLI 引数のパース（サブコマンド、フラグ、マウント）
-├── path_validator.rs  # パス検証（環境変数展開、正規化、$HOME 判定）
-├── policy.rs          # ポリシー評価（deny/ask/allow の判定ロジック）
-├── compose.rs         # docker-compose.yml の解析（volumes、危険設定）
-├── config.rs          # TOML 設定ファイルの読み込み
+├── main.rs            # エントリポイント、モード判別（Hook/Wrapper）、--check-config
+├── wrapper.rs         # ラッパーモード（evaluate_docker_args, exec_docker, find_real_docker, handle_ask）
+├── hook.rs            # Hook モード: stdin/stdout の JSON プロトコル、Decision 型
+├── shell.rs           # シェルコマンドのパース（パイプ/チェイン分割、間接実行検出）※Hook モードのみ
+├── docker_args.rs     # Docker CLI 引数のパース（サブコマンド、フラグ、マウント）※両モード共通
+├── path_validator.rs  # パス検証（環境変数展開、正規化、$HOME 判定）※両モード共通
+├── policy.rs          # ポリシー評価（deny/ask/allow の判定ロジック）※両モード共通
+├── compose.rs         # docker-compose.yml の解析（volumes、危険設定）※両モード共通
+├── config.rs          # TOML 設定ファイルの読み込み（[wrapper] セクション含む）
+├── audit.rs           # 監査ログ（JSONL / OTLP）※両モード共通、mode フィールドで区別
 └── error.rs           # エラー型定義
 
 tests/
-├── integration_test.rs  # バイナリレベルの E2E テスト
+├── integration_test.rs  # Hook モードの E2E テスト（stdin/stdout）
+├── wrapper_test.rs      # Wrapper モードの E2E テスト（/bin/echo をモック docker として使用）
 ├── security_test.rs     # セキュリティバイパス検出テスト
 └── proptest_test.rs     # ランダム入力によるクラッシュ耐性テスト
 
@@ -58,7 +64,14 @@ benches/
 
 ## アーキテクチャ
 
-処理フロー:
+### モード判別（main.rs）
+```
+argv[0] が "docker"/"docker-compose"  → Wrapper モード（透過）
+CLI 引数あり                           → Wrapper モード（明示的）
+CLI 引数なし                           → Hook モード（stdin JSON）
+```
+
+### Hook モードの処理フロー
 ```
 stdin (JSON) → hook::read_input()
   → hook::extract_command()     # Bash ツール以外は即 allow
@@ -71,6 +84,19 @@ stdin (JSON) → hook::read_input()
       → policy::evaluate()              # ポリシー評価
   → deny > ask > allow で集約
   → stdout (JSON) or 無出力 (allow)
+```
+
+### Wrapper モードの処理フロー
+```
+OS 引数 → wrapper::run()
+  → 再帰呼び出し防止チェック (SAFE_DOCKER_ACTIVE)
+  → バイパスチェック (SAFE_DOCKER_BYPASS)
+  → docker_args::parse_docker_args()  # shell.rs をスキップし直接パース
+  → policy::evaluate()                # ポリシー評価
+  → Decision に応じたアクション:
+      Allow → exec_docker() (プロセス置換、戻らない)
+      Deny  → stderr にエラー + exit 1
+      Ask   → handle_ask() (TTY なら y/N プロンプト、非 TTY なら設定に従う)
 ```
 
 ## 設計原則

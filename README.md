@@ -323,6 +323,32 @@ non_interactive_ask = "deny"  # 非対話環境での ask 判定の扱い ("deny
 
 Wrapper モードは「完全な強制」ではなく「安全ネット」。`SAFE_DOCKER_BYPASS=1` で意図的にスキップできるのは設計上正しい。完全な強制が必要な場合は OPA Docker AuthZ プラグイン等の別レイヤーで対応。
 
+## ディレクトリ構成
+
+```
+src/
+├── main.rs            # エントリポイント、モード判別（Hook/Wrapper）
+├── wrapper.rs         # Wrapper モード（ポリシー評価、docker exec、対話的確認）
+├── hook.rs            # Hook モード（stdin/stdout JSON プロトコル、Decision 型）
+├── shell.rs           # シェルコマンドのパース（Hook モードで使用）
+├── docker_args.rs     # Docker CLI 引数のパース（両モード共通）
+├── path_validator.rs  # パス検証（両モード共通）
+├── policy.rs          # ポリシー評価（両モード共通）
+├── compose.rs         # docker-compose.yml の解析（両モード共通）
+├── config.rs          # TOML 設定ファイル（[wrapper] / [audit] セクション含む）
+├── audit.rs           # 監査ログ（JSONL / OTLP、mode フィールドで Hook/Wrapper を区別）
+└── error.rs           # エラー型定義
+
+tests/
+├── integration_test.rs  # Hook モードの E2E テスト
+├── wrapper_test.rs      # Wrapper モードの E2E テスト
+├── security_test.rs     # セキュリティバイパス検出テスト
+└── proptest_test.rs     # ランダム入力によるクラッシュ耐性テスト
+
+benches/
+└── benchmark.rs         # criterion ベンチマーク
+```
+
 ## テスト
 
 ```bash
