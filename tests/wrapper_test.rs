@@ -348,12 +348,59 @@ fn test_wrapper_allow_tilde_mount() {
 // --- verbose テスト (deny 時の tip 表示) ---
 
 #[test]
-fn test_wrapper_verbose_deny() {
+fn test_wrapper_verbose_deny_privileged() {
     let (_stdout, stderr, exit_code) = run_wrapper(&["--verbose", "run", "--privileged", "ubuntu"]);
     assert_eq!(exit_code, 1);
     assert!(
         stderr.contains("Tip:"),
         "Expected tip in verbose mode: {}",
+        stderr
+    );
+    // --privileged に対して --cap-add を提案するか確認
+    assert!(
+        stderr.contains("--cap-add"),
+        "Expected --cap-add suggestion for --privileged, got: {}",
+        stderr
+    );
+}
+
+#[test]
+fn test_wrapper_verbose_deny_mount_outside_home() {
+    let (_stdout, stderr, exit_code) =
+        run_wrapper(&["--verbose", "run", "-v", "/etc:/data", "ubuntu"]);
+    assert_eq!(exit_code, 1);
+    assert!(
+        stderr.contains("allowed_paths"),
+        "Expected allowed_paths tip for path denial, got: {}",
+        stderr
+    );
+}
+
+#[test]
+fn test_wrapper_verbose_deny_docker_socket() {
+    let (_stdout, stderr, exit_code) = run_wrapper(&[
+        "--verbose",
+        "run",
+        "-v",
+        "/var/run/docker.sock:/var/run/docker.sock",
+        "ubuntu",
+    ]);
+    assert_eq!(exit_code, 1);
+    assert!(
+        stderr.contains("block_docker_socket"),
+        "Expected block_docker_socket tip, got: {}",
+        stderr
+    );
+}
+
+#[test]
+fn test_wrapper_verbose_deny_network_host() {
+    let (_stdout, stderr, exit_code) =
+        run_wrapper(&["--verbose", "run", "--network=host", "ubuntu"]);
+    assert_eq!(exit_code, 1);
+    assert!(
+        stderr.contains("blocked_flags"),
+        "Expected blocked_flags tip for namespace flag, got: {}",
         stderr
     );
 }
@@ -456,6 +503,157 @@ fn test_wrapper_help_contains_docker_path() {
         stderr.contains("--docker-path"),
         "Help should mention --docker-path: {}",
         stderr
+    );
+}
+
+// --- エッジケーステスト ---
+
+#[test]
+fn test_wrapper_docker_path_nonexistent_falls_back_to_path() {
+    // --docker-path に存在しないパスを指定 → PATH からフォールバック検索
+    // find_real_docker() は env → config → PATH の順で探すため、
+    // config に不正パスがあっても PATH に docker があれば成功する
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_safe-docker"));
+    cmd.args(["--docker-path", "/nonexistent/docker", "--dry-run", "ps"]);
+    cmd.env_remove("SAFE_DOCKER_ACTIVE");
+    cmd.env_remove("SAFE_DOCKER_BYPASS");
+    cmd.env_remove("SAFE_DOCKER_DOCKER_PATH");
+    let output = cmd
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .expect("Failed to spawn safe-docker");
+
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    let exit_code = output.status.code().unwrap_or(-1);
+    // PATH に docker がある環境ではフォールバック成功 → allow
+    assert_eq!(
+        exit_code, 0,
+        "Nonexistent --docker-path should fall back to PATH, stderr: {}",
+        stderr
+    );
+    assert!(
+        stderr.contains("Decision: allow"),
+        "Expected allow with fallback, got: {}",
+        stderr
+    );
+}
+
+#[test]
+fn test_wrapper_env_docker_path_overrides_cli_docker_path() {
+    // SAFE_DOCKER_DOCKER_PATH 環境変数は --docker-path CLI より優先（env > config > PATH）
+    // ただし --docker-path は config を上書きするだけなので、env が最優先
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_safe-docker"));
+    cmd.args(["--docker-path", "/nonexistent/docker", "ps"]);
+    // env で /bin/echo を指定 → env が勝つ
+    cmd.env("SAFE_DOCKER_DOCKER_PATH", "/bin/echo");
+    cmd.env_remove("SAFE_DOCKER_ACTIVE");
+    cmd.env_remove("SAFE_DOCKER_BYPASS");
+    let output = cmd
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .expect("Failed to spawn safe-docker");
+
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    let exit_code = output.status.code().unwrap_or(-1);
+    assert_eq!(
+        exit_code,
+        0,
+        "Env var should override --docker-path, stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        stdout.contains("ps"),
+        "Expected /bin/echo to run with 'ps', got: {}",
+        stdout
+    );
+}
+
+#[test]
+fn test_wrapper_safe_docker_ask_invalid_value() {
+    // SAFE_DOCKER_ASK に不正な値 → config のデフォルト (deny) にフォールバック
+    let mount_arg = format!("{}/.ssh:/keys", home_dir());
+    let (_stdout, stderr, exit_code) = run_wrapper_with_env(
+        &["run", "-v", &mount_arg, "ubuntu"],
+        &[("SAFE_DOCKER_ASK", "invalid_value")],
+    );
+    // 非 TTY 環境で ask → deny（不正な値は無視して config デフォルト = deny）
+    assert_eq!(
+        exit_code, 1,
+        "Invalid SAFE_DOCKER_ASK should fall back to deny, stderr: {}",
+        stderr
+    );
+}
+
+#[test]
+fn test_wrapper_safe_docker_ask_allow() {
+    // SAFE_DOCKER_ASK=allow → 非対話環境で ask 判定が allow に
+    let mount_arg = format!("{}/.ssh:/keys", home_dir());
+    let (stdout, stderr, exit_code) = run_wrapper_with_env(
+        &["run", "-v", &mount_arg, "ubuntu"],
+        &[("SAFE_DOCKER_ASK", "allow")],
+    );
+    assert_eq!(
+        exit_code, 0,
+        "SAFE_DOCKER_ASK=allow should proceed, stderr: {}",
+        stderr
+    );
+    assert!(
+        stderr.contains("Non-interactive: proceeding"),
+        "Expected non-interactive allow message, got stderr: {}",
+        stderr
+    );
+    assert!(
+        stdout.contains("run"),
+        "Expected docker execution, got stdout: {}",
+        stdout
+    );
+}
+
+#[test]
+fn test_wrapper_safe_docker_ask_deny() {
+    // SAFE_DOCKER_ASK=deny → 非対話環境で ask 判定が deny に
+    let mount_arg = format!("{}/.ssh:/keys", home_dir());
+    let (_stdout, stderr, exit_code) = run_wrapper_with_env(
+        &["run", "-v", &mount_arg, "ubuntu"],
+        &[("SAFE_DOCKER_ASK", "deny")],
+    );
+    assert_eq!(
+        exit_code, 1,
+        "SAFE_DOCKER_ASK=deny should block, stderr: {}",
+        stderr
+    );
+    assert!(
+        stderr.contains("Non-interactive: blocked"),
+        "Expected non-interactive deny message, got stderr: {}",
+        stderr
+    );
+}
+
+#[test]
+fn test_wrapper_no_args_is_hook_mode() {
+    // 引数なしで起動 → hook モード（stdin から JSON を期待）
+    // stdin が null なので即終了（エラーにならない）
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_safe-docker"));
+    cmd.env_remove("SAFE_DOCKER_ACTIVE");
+    cmd.env_remove("SAFE_DOCKER_BYPASS");
+    cmd.env_remove("SAFE_DOCKER_DOCKER_PATH");
+    let output = cmd
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .expect("Failed to spawn safe-docker");
+
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    // hook モードで stdin が空/無効 → deny 出力
+    assert!(
+        stdout.contains("deny") || stdout.is_empty(),
+        "No-args should enter hook mode (deny on null stdin or empty), got stdout: {}",
+        stdout
     );
 }
 
