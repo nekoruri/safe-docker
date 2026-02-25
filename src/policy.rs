@@ -544,9 +544,7 @@ mod tests {
         let cmd = DockerCommand {
             subcommand: DockerSubcommand::Run,
             bind_mounts: vec![],
-            dangerous_flags: vec![DangerousFlag::SecurityOpt(
-                "no-new-privileges".to_string(),
-            )],
+            dangerous_flags: vec![DangerousFlag::SecurityOpt("no-new-privileges".to_string())],
             compose_file: None,
             image: Some("ubuntu".to_string()),
             host_paths: vec![],

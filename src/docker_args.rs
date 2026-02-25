@@ -227,10 +227,7 @@ pub fn parse_docker_args(args: &[&str]) -> DockerCommand {
             if i < args.len() && args[i] == "build" {
                 DockerSubcommand::Build
             } else {
-                DockerSubcommand::Other(format!(
-                    "buildx-{}",
-                    args.get(i).unwrap_or(&"unknown")
-                ))
+                DockerSubcommand::Other(format!("buildx-{}", args.get(i).unwrap_or(&"unknown")))
             }
         }
         _ => DockerSubcommand::Other(args[i].to_string()),
@@ -573,18 +570,13 @@ fn parse_exec_args(args: &[&str], start: usize, cmd: &mut DockerCommand) {
         }
 
         // 値付きオプション (-e, --env, -u, --user, -w, --workdir)
-        if matches!(
-            arg,
-            "-e" | "--env" | "-u" | "--user" | "-w" | "--workdir"
-        ) {
+        if matches!(arg, "-e" | "--env" | "-u" | "--user" | "-w" | "--workdir") {
             i += 2;
             continue;
         }
 
         // = 付きオプションをスキップ
-        if arg.starts_with("--env=")
-            || arg.starts_with("--user=")
-            || arg.starts_with("--workdir=")
+        if arg.starts_with("--env=") || arg.starts_with("--user=") || arg.starts_with("--workdir=")
         {
             i += 1;
             continue;
@@ -1084,7 +1076,15 @@ mod tests {
 
     #[test]
     fn test_parse_buildx_build_with_platform() {
-        let args = vec!["buildx", "build", "-t", "myapp", "--platform", "linux/amd64", "/etc"];
+        let args = vec![
+            "buildx",
+            "build",
+            "-t",
+            "myapp",
+            "--platform",
+            "linux/amd64",
+            "/etc",
+        ];
         let cmd = parse_docker_args(&args);
         assert_eq!(cmd.subcommand, DockerSubcommand::Build);
         assert_eq!(cmd.host_paths, vec!["/etc"]);
@@ -1117,7 +1117,14 @@ mod tests {
 
     #[test]
     fn test_parse_docker_exec_with_env() {
-        let args = vec!["exec", "-e", "FOO=bar", "--privileged", "mycontainer", "bash"];
+        let args = vec![
+            "exec",
+            "-e",
+            "FOO=bar",
+            "--privileged",
+            "mycontainer",
+            "bash",
+        ];
         let cmd = parse_docker_args(&args);
         assert_eq!(cmd.subcommand, DockerSubcommand::Exec);
         assert!(cmd.dangerous_flags.contains(&DangerousFlag::Privileged));
