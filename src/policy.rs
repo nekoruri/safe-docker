@@ -25,41 +25,60 @@ pub fn evaluate(cmd: &DockerCommand, config: &Config, cwd: &str) -> Decision {
     for flag in &cmd.dangerous_flags {
         match flag {
             DangerousFlag::Privileged => {
-                deny_reasons.push("--privileged flag is not allowed".to_string());
+                deny_reasons.push(
+                    "--privileged is not allowed (grants full host access to the container)"
+                        .to_string(),
+                );
             }
             DangerousFlag::CapAdd(cap) => {
                 if config.is_capability_blocked(cap) {
-                    deny_reasons.push(format!("--cap-add={} is not allowed", cap));
+                    deny_reasons.push(format!(
+                        "--cap-add={} is blocked (check blocked_capabilities in config)",
+                        cap
+                    ));
                 }
             }
             DangerousFlag::SecurityOpt(opt) => {
                 if is_dangerous_security_opt(opt) {
-                    deny_reasons.push(format!("--security-opt {} is not allowed", opt));
+                    deny_reasons.push(format!(
+                        "--security-opt {} disables a security profile and is not allowed",
+                        opt
+                    ));
                 }
             }
             DangerousFlag::PidHost => {
-                deny_reasons.push("--pid=host is not allowed".to_string());
+                deny_reasons
+                    .push("--pid=host is not allowed (exposes host process namespace)".to_string());
             }
             DangerousFlag::NetworkHost => {
-                deny_reasons.push("--network=host is not allowed".to_string());
+                deny_reasons.push(
+                    "--network=host is not allowed (exposes host network namespace)".to_string(),
+                );
             }
             DangerousFlag::Device(dev) => {
-                deny_reasons.push(format!("--device={} is not allowed", dev));
+                deny_reasons.push(format!(
+                    "--device={} is not allowed (grants access to host hardware)",
+                    dev
+                ));
             }
             DangerousFlag::VolumesFrom(src) => {
                 ask_reasons.push(format!(
-                    "--volumes-from={} may inherit dangerous mounts from another container",
+                    "--volumes-from={} may inherit dangerous mounts; verify the source container is safe",
                     src
                 ));
             }
             DangerousFlag::UsernsHost => {
-                deny_reasons.push("--userns=host is not allowed".to_string());
+                deny_reasons
+                    .push("--userns=host is not allowed (exposes host user namespace)".to_string());
             }
             DangerousFlag::CgroupnsHost => {
-                deny_reasons.push("--cgroupns=host is not allowed".to_string());
+                deny_reasons.push(
+                    "--cgroupns=host is not allowed (exposes host cgroup namespace)".to_string(),
+                );
             }
             DangerousFlag::IpcHost => {
-                deny_reasons.push("--ipc=host is not allowed".to_string());
+                deny_reasons
+                    .push("--ipc=host is not allowed (exposes host IPC namespace)".to_string());
             }
         }
     }
@@ -89,32 +108,55 @@ pub fn evaluate(cmd: &DockerCommand, config: &Config, cwd: &str) -> Decision {
     for flag in &all_flags {
         match flag {
             DangerousFlag::Privileged => {
-                deny_reasons.push("Compose: privileged is not allowed".to_string());
+                deny_reasons.push(
+                    "Compose: 'privileged: true' is not allowed (grants full host access)"
+                        .to_string(),
+                );
             }
             DangerousFlag::CapAdd(cap) => {
                 if config.is_capability_blocked(cap) {
-                    deny_reasons.push(format!("Compose: cap_add {} is not allowed", cap));
+                    deny_reasons.push(format!(
+                        "Compose: cap_add '{}' is blocked (check blocked_capabilities in config)",
+                        cap
+                    ));
                 }
             }
             DangerousFlag::SecurityOpt(opt) => {
                 if is_dangerous_security_opt(opt) {
-                    deny_reasons.push(format!("Compose: security_opt {} is not allowed", opt));
+                    deny_reasons.push(format!(
+                        "Compose: security_opt '{}' disables a security profile and is not allowed",
+                        opt
+                    ));
                 }
             }
             DangerousFlag::PidHost => {
-                deny_reasons.push("Compose: pid host is not allowed".to_string());
+                deny_reasons.push(
+                    "Compose: 'pid: host' is not allowed (exposes host process namespace)"
+                        .to_string(),
+                );
             }
             DangerousFlag::NetworkHost => {
-                deny_reasons.push("Compose: network_mode host is not allowed".to_string());
+                deny_reasons.push(
+                    "Compose: 'network_mode: host' is not allowed (exposes host network namespace)"
+                        .to_string(),
+                );
             }
             DangerousFlag::Device(dev) => {
-                deny_reasons.push(format!("Compose: device {} is not allowed", dev));
+                deny_reasons.push(format!(
+                    "Compose: device '{}' is not allowed (grants access to host hardware)",
+                    dev
+                ));
             }
             DangerousFlag::UsernsHost => {
-                deny_reasons.push("Compose: userns_mode host is not allowed".to_string());
+                deny_reasons.push(
+                    "Compose: 'userns_mode: host' is not allowed (exposes host user namespace)"
+                        .to_string(),
+                );
             }
             DangerousFlag::IpcHost => {
-                deny_reasons.push("Compose: ipc host is not allowed".to_string());
+                deny_reasons.push(
+                    "Compose: 'ipc: host' is not allowed (exposes host IPC namespace)".to_string(),
+                );
             }
             _ => {}
         }
@@ -162,7 +204,10 @@ pub fn evaluate(cmd: &DockerCommand, config: &Config, cwd: &str) -> Decision {
             .iter()
             .any(|allowed| image_name == allowed)
         {
-            ask_reasons.push(format!("Image '{}' is not in the allowed list", image));
+            ask_reasons.push(format!(
+                "Image '{}' is not in allowed_images (to allow, add it to config)",
+                image
+            ));
         }
     }
 
@@ -186,13 +231,19 @@ fn resolve_compose_analysis(
     match compose_path {
         Some(path) => {
             if !path.exists() {
-                return Err(format!("Compose file not found: {}", path.display()));
+                return Err(format!(
+                    "Compose file not found: {} (check -f option or create the file)",
+                    path.display()
+                ));
             }
             crate::compose::analyze_compose(&path).map_err(|e| e.to_string())
         }
         None => {
             // compose ファイルが見つからない場合は deny
-            Err("No compose file found in current directory".to_string())
+            Err(
+                "No compose file found (expected compose.yml or docker-compose.yml in current directory)"
+                    .to_string(),
+            )
         }
     }
 }

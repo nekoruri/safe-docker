@@ -99,7 +99,7 @@ fn logical_normalize(path: &Path) -> PathBuf {
 pub fn validate_path(raw_path: &str, config: &Config) -> PathVerdict {
     // 空パスは拒否
     if raw_path.is_empty() {
-        return PathVerdict::Denied("Empty path".to_string());
+        return PathVerdict::Denied("Empty path (specify a host path for the mount)".to_string());
     }
 
     // 環境変数を展開
@@ -108,7 +108,7 @@ pub fn validate_path(raw_path: &str, config: &Config) -> PathVerdict {
     // 未展開の変数が残っている場合は解決不能
     if has_unresolved_vars(&expanded) {
         return PathVerdict::Unresolvable(format!(
-            "Path contains unresolved variables: {}",
+            "Path contains unresolved variables: {} (only $HOME and $PWD are expanded)",
             raw_path
         ));
     }
@@ -120,7 +120,10 @@ pub fn validate_path(raw_path: &str, config: &Config) -> PathVerdict {
             || normalized == "/run/docker.sock"
             || normalized.ends_with("/docker.sock")
         {
-            return PathVerdict::Denied(format!("Docker socket mount is blocked: {}", raw_path));
+            return PathVerdict::Denied(format!(
+                "Docker socket mount is blocked: {} (set block_docker_socket = false in config to allow)",
+                raw_path
+            ));
         }
     }
 
@@ -134,7 +137,10 @@ pub fn validate_path(raw_path: &str, config: &Config) -> PathVerdict {
                 || logical_trimmed == "/run/docker.sock"
                 || logical_trimmed.ends_with("/docker.sock"))
         {
-            return PathVerdict::Denied(format!("Docker socket mount is blocked: {}", raw_path));
+            return PathVerdict::Denied(format!(
+                "Docker socket mount is blocked: {} (set block_docker_socket = false in config to allow)",
+                raw_path
+            ));
         }
     }
 
@@ -152,7 +158,7 @@ pub fn validate_path(raw_path: &str, config: &Config) -> PathVerdict {
                     Ok(cwd) => cwd.join(path),
                     Err(_) => {
                         return PathVerdict::Unresolvable(format!(
-                            "Cannot resolve relative path: {}",
+                            "Cannot resolve relative path: {} (use an absolute path or $HOME-relative path)",
                             raw_path
                         ));
                     }
@@ -173,7 +179,9 @@ pub fn validate_path(raw_path: &str, config: &Config) -> PathVerdict {
     let home = match home_dir() {
         Some(h) => h,
         None => {
-            return PathVerdict::Unresolvable("Cannot determine home directory".to_string());
+            return PathVerdict::Unresolvable(
+                "Cannot determine home directory (ensure $HOME is set)".to_string(),
+            );
         }
     };
 
@@ -190,7 +198,7 @@ pub fn validate_path(raw_path: &str, config: &Config) -> PathVerdict {
 
         if config.is_path_sensitive(relative) {
             return PathVerdict::Sensitive(format!(
-                "Sensitive path under $HOME: {} (resolved: {})",
+                "Mounting sensitive path {} (resolved: {}) which may contain credentials or keys",
                 raw_path, canonical_str
             ));
         }
@@ -200,7 +208,7 @@ pub fn validate_path(raw_path: &str, config: &Config) -> PathVerdict {
 
     // $HOME 外
     PathVerdict::Denied(format!(
-        "Path is outside $HOME: {} (resolved: {})",
+        "Path is outside $HOME: {} (resolved: {}). Only $HOME paths or allowed_paths are permitted",
         raw_path, canonical_str
     ))
 }
