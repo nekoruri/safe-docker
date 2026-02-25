@@ -336,6 +336,21 @@ fn generate_tips(reason: &str) -> Vec<String> {
                 .to_string(),
         );
     }
+    if reason.contains("--network=container:")
+        || reason.contains("--pid=container:")
+        || reason.contains("--ipc=container:")
+    {
+        tips.push(
+            "Container namespace sharing allows cross-container access and is blocked by default"
+                .to_string(),
+        );
+    }
+    if reason.contains("bind-propagation=") {
+        tips.push(
+            "shared/rshared propagation allows mount changes to reach the host. Use private (default) instead"
+                .to_string(),
+        );
+    }
 
     // Compose 関連
     if reason.contains("Compose:") {

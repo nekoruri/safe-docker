@@ -119,18 +119,28 @@ fn extract_service_dangerous_settings(service: &serde_yml::Value, flags: &mut Ve
         flags.push(DangerousFlag::Privileged);
     }
 
-    // network_mode: host
-    if let Some(mode) = service.get("network_mode").and_then(|v| v.as_str())
-        && mode == "host"
-    {
-        flags.push(DangerousFlag::NetworkHost);
+    // network_mode: host | container:NAME | service:NAME
+    if let Some(mode) = service.get("network_mode").and_then(|v| v.as_str()) {
+        if mode == "host" {
+            flags.push(DangerousFlag::NetworkHost);
+        } else if let Some(name) = mode
+            .strip_prefix("container:")
+            .or_else(|| mode.strip_prefix("service:"))
+        {
+            flags.push(DangerousFlag::NetworkContainer(name.to_string()));
+        }
     }
 
-    // pid: host
-    if let Some(pid) = service.get("pid").and_then(|v| v.as_str())
-        && pid == "host"
-    {
-        flags.push(DangerousFlag::PidHost);
+    // pid: host | container:NAME | service:NAME
+    if let Some(pid) = service.get("pid").and_then(|v| v.as_str()) {
+        if pid == "host" {
+            flags.push(DangerousFlag::PidHost);
+        } else if let Some(name) = pid
+            .strip_prefix("container:")
+            .or_else(|| pid.strip_prefix("service:"))
+        {
+            flags.push(DangerousFlag::PidContainer(name.to_string()));
+        }
     }
 
     // userns_mode: host
@@ -140,11 +150,16 @@ fn extract_service_dangerous_settings(service: &serde_yml::Value, flags: &mut Ve
         flags.push(DangerousFlag::UsernsHost);
     }
 
-    // ipc: host
-    if let Some(ipc) = service.get("ipc").and_then(|v| v.as_str())
-        && ipc == "host"
-    {
-        flags.push(DangerousFlag::IpcHost);
+    // ipc: host | container:NAME | service:NAME
+    if let Some(ipc) = service.get("ipc").and_then(|v| v.as_str()) {
+        if ipc == "host" {
+            flags.push(DangerousFlag::IpcHost);
+        } else if let Some(name) = ipc
+            .strip_prefix("container:")
+            .or_else(|| ipc.strip_prefix("service:"))
+        {
+            flags.push(DangerousFlag::IpcContainer(name.to_string()));
+        }
     }
 
     // cap_add: [SYS_ADMIN, ...]

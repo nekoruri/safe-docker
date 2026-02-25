@@ -436,3 +436,104 @@ fn test_deny_compose_cap_add() {
     assert_eq!(exit_code, 0);
     assert_deny(&stdout, "compose with cap_add: SYS_ADMIN");
 }
+
+// --- コンテナ間 namespace 共有テスト ---
+
+#[test]
+fn test_deny_network_container() {
+    let (stdout, exit_code) =
+        run_hook(&make_bash_input("docker run --network=container:db ubuntu"));
+    assert_eq!(exit_code, 0);
+    assert_deny(&stdout, "--network=container:db");
+}
+
+#[test]
+fn test_deny_pid_container() {
+    let (stdout, exit_code) = run_hook(&make_bash_input("docker run --pid=container:app ubuntu"));
+    assert_eq!(exit_code, 0);
+    assert_deny(&stdout, "--pid=container:app");
+}
+
+#[test]
+fn test_deny_ipc_container() {
+    let (stdout, exit_code) = run_hook(&make_bash_input("docker run --ipc=container:shm ubuntu"));
+    assert_eq!(exit_code, 0);
+    assert_deny(&stdout, "--ipc=container:shm");
+}
+
+// --- mount propagation テスト ---
+
+#[test]
+fn test_deny_volume_propagation_shared() {
+    let home = dirs::home_dir().unwrap().to_string_lossy().to_string();
+    let cmd = format!("docker run -v {}/data:/data:shared ubuntu", home);
+    let (stdout, exit_code) = run_hook(&make_bash_input(&cmd));
+    assert_eq!(exit_code, 0);
+    assert_deny(&stdout, "-v with shared propagation");
+}
+
+#[test]
+fn test_deny_mount_propagation_rshared() {
+    let home = dirs::home_dir().unwrap().to_string_lossy().to_string();
+    let cmd = format!(
+        "docker run --mount type=bind,source={}/data,target=/data,bind-propagation=rshared ubuntu",
+        home
+    );
+    let (stdout, exit_code) = run_hook(&make_bash_input(&cmd));
+    assert_eq!(exit_code, 0);
+    assert_deny(&stdout, "--mount with rshared propagation");
+}
+
+// --- Compose コンテナ間 namespace 共有テスト ---
+
+#[test]
+fn test_deny_compose_network_mode_container() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("compose.yml"),
+        "services:\n  web:\n    image: ubuntu\n    network_mode: container:db\n",
+    )
+    .unwrap();
+
+    let input = serde_json::json!({
+        "session_id": "test-session",
+        "hook_event_name": "PreToolUse",
+        "tool_name": "Bash",
+        "tool_input": {
+            "command": "docker compose up",
+            "description": "test"
+        },
+        "cwd": dir.path().to_str().unwrap()
+    })
+    .to_string();
+
+    let (stdout, exit_code) = run_hook(&input);
+    assert_eq!(exit_code, 0);
+    assert_deny(&stdout, "compose with network_mode: container:db");
+}
+
+#[test]
+fn test_deny_compose_pid_container() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("compose.yml"),
+        "services:\n  web:\n    image: ubuntu\n    pid: container:app\n",
+    )
+    .unwrap();
+
+    let input = serde_json::json!({
+        "session_id": "test-session",
+        "hook_event_name": "PreToolUse",
+        "tool_name": "Bash",
+        "tool_input": {
+            "command": "docker compose up",
+            "description": "test"
+        },
+        "cwd": dir.path().to_str().unwrap()
+    })
+    .to_string();
+
+    let (stdout, exit_code) = run_hook(&input);
+    assert_eq!(exit_code, 0);
+    assert_deny(&stdout, "compose with pid: container:app");
+}

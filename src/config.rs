@@ -94,6 +94,11 @@ fn default_sensitive_paths() -> Vec<String> {
         ".kube".to_string(),
         ".config/gcloud".to_string(),
         ".claude".to_string(),
+        ".terraform".to_string(),
+        ".vault-token".to_string(),
+        ".config/gh".to_string(),
+        ".npmrc".to_string(),
+        ".pypirc".to_string(),
     ]
 }
 
