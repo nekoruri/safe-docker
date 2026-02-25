@@ -1,7 +1,17 @@
 use serde::Deserialize;
+use std::collections::HashSet;
 use std::path::PathBuf;
 
 use crate::error::{Result, SafeDockerError};
+
+/// バリデーション結果の問題点
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ConfigIssue {
+    /// 設定が無効（修正必須）
+    Error(String),
+    /// 意図しない可能性がある設定（修正推奨）
+    Warning(String),
+}
 
 /// 監査ログの出力形式
 #[derive(Debug, Clone, Default, Deserialize, PartialEq, Eq)]
@@ -168,6 +178,163 @@ impl Config {
         self.blocked_capabilities
             .iter()
             .any(|blocked| cap_upper == blocked.to_uppercase())
+    }
+
+    /// 設定のバリデーションを行い、問題点のリストを返す
+    pub fn validate(&self) -> Vec<ConfigIssue> {
+        let mut issues = Vec::new();
+
+        // allowed_paths: 絶対パスであること
+        for (i, path) in self.allowed_paths.iter().enumerate() {
+            if path.is_empty() {
+                issues.push(ConfigIssue::Error(format!(
+                    "allowed_paths[{}]: empty string",
+                    i
+                )));
+            } else if !path.starts_with('/') && !path.starts_with('~') {
+                issues.push(ConfigIssue::Error(format!(
+                    "allowed_paths[{}]: '{}' is not an absolute path (must start with '/' or '~')",
+                    i, path
+                )));
+            }
+        }
+
+        // allowed_paths: 存在しないパスの警告
+        for path in &self.allowed_paths {
+            if !path.is_empty() && path.starts_with('/') && !PathBuf::from(path).exists() {
+                issues.push(ConfigIssue::Warning(format!(
+                    "allowed_paths: '{}' does not exist",
+                    path
+                )));
+            }
+        }
+
+        // allowed_paths: 重複チェック
+        check_duplicates(&self.allowed_paths, "allowed_paths", &mut issues);
+
+        // sensitive_paths: 相対パスであること
+        for (i, path) in self.sensitive_paths.iter().enumerate() {
+            if path.is_empty() {
+                issues.push(ConfigIssue::Error(format!(
+                    "sensitive_paths[{}]: empty string",
+                    i
+                )));
+            } else if path.starts_with('/') {
+                issues.push(ConfigIssue::Error(format!(
+                    "sensitive_paths[{}]: '{}' must be a relative path (relative to $HOME)",
+                    i, path
+                )));
+            }
+        }
+
+        // sensitive_paths: 重複チェック
+        check_duplicates(&self.sensitive_paths, "sensitive_paths", &mut issues);
+
+        // blocked_flags: -- で始まること
+        for (i, flag) in self.blocked_flags.iter().enumerate() {
+            if flag.is_empty() {
+                issues.push(ConfigIssue::Error(format!(
+                    "blocked_flags[{}]: empty string",
+                    i
+                )));
+            } else if !flag.starts_with("--") {
+                issues.push(ConfigIssue::Error(format!(
+                    "blocked_flags[{}]: '{}' must start with '--'",
+                    i, flag
+                )));
+            }
+        }
+
+        // blocked_flags: 重複チェック
+        check_duplicates(&self.blocked_flags, "blocked_flags", &mut issues);
+
+        // blocked_capabilities: 有効な capability 名の形式
+        for (i, cap) in self.blocked_capabilities.iter().enumerate() {
+            if cap.is_empty() {
+                issues.push(ConfigIssue::Error(format!(
+                    "blocked_capabilities[{}]: empty string",
+                    i
+                )));
+            } else if !is_valid_capability_name(cap) {
+                issues.push(ConfigIssue::Error(format!(
+                    "blocked_capabilities[{}]: '{}' is not a valid Linux capability name (expected uppercase like SYS_ADMIN, NET_RAW, ALL)",
+                    i, cap
+                )));
+            }
+        }
+
+        // blocked_capabilities: 重複チェック (大文字小文字無視)
+        {
+            let mut seen = HashSet::new();
+            for cap in &self.blocked_capabilities {
+                let upper = cap.to_uppercase();
+                if !seen.insert(upper) {
+                    issues.push(ConfigIssue::Warning(format!(
+                        "blocked_capabilities: '{}' is duplicated",
+                        cap
+                    )));
+                }
+            }
+        }
+
+        // allowed_images: 空文字列でないこと
+        for (i, image) in self.allowed_images.iter().enumerate() {
+            if image.is_empty() {
+                issues.push(ConfigIssue::Error(format!(
+                    "allowed_images[{}]: empty string",
+                    i
+                )));
+            }
+        }
+
+        // allowed_images: 重複チェック
+        check_duplicates(&self.allowed_images, "allowed_images", &mut issues);
+
+        // audit パスの検証
+        if self.audit.enabled {
+            if self.audit.jsonl_path.is_empty()
+                && matches!(self.audit.format, AuditFormat::Jsonl | AuditFormat::Both)
+            {
+                issues.push(ConfigIssue::Error(
+                    "audit.jsonl_path: empty string (required when format is 'jsonl' or 'both')"
+                        .to_string(),
+                ));
+            }
+            if self.audit.otlp_path.is_empty()
+                && matches!(self.audit.format, AuditFormat::Otlp | AuditFormat::Both)
+            {
+                issues.push(ConfigIssue::Error(
+                    "audit.otlp_path: empty string (required when format is 'otlp' or 'both')"
+                        .to_string(),
+                ));
+            }
+        }
+
+        issues
+    }
+}
+
+/// 有効な Linux capability 名か判定
+/// ALL, または大文字英字とアンダースコアで構成される名前
+fn is_valid_capability_name(name: &str) -> bool {
+    if name.is_empty() {
+        return false;
+    }
+    let upper = name.to_uppercase();
+    upper.chars().all(|c| c.is_ascii_uppercase() || c == '_')
+        && upper.starts_with(|c: char| c.is_ascii_uppercase())
+}
+
+/// 重複チェック
+fn check_duplicates(items: &[String], field_name: &str, issues: &mut Vec<ConfigIssue>) {
+    let mut seen = HashSet::new();
+    for item in items {
+        if !item.is_empty() && !seen.insert(item) {
+            issues.push(ConfigIssue::Warning(format!(
+                "{}: '{}' is duplicated",
+                field_name, item
+            )));
+        }
     }
 }
 
@@ -380,5 +547,218 @@ mod tests {
         // audit セクションが省略された場合はデフォルト
         assert!(!config.audit.enabled);
         assert_eq!(config.audit.format, AuditFormat::Jsonl);
+    }
+
+    // --- validate() テスト ---
+
+    #[test]
+    fn test_validate_default_config() {
+        let config = Config::default();
+        let issues = config.validate();
+        assert!(
+            issues.is_empty(),
+            "Default config should have no issues: {:?}",
+            issues
+        );
+    }
+
+    #[test]
+    fn test_validate_allowed_paths_relative() {
+        let mut config = Config::default();
+        config.allowed_paths = vec!["relative/path".to_string()];
+        let issues = config.validate();
+        assert!(
+            issues.iter().any(
+                |i| matches!(i, ConfigIssue::Error(msg) if msg.contains("not an absolute path"))
+            )
+        );
+    }
+
+    #[test]
+    fn test_validate_allowed_paths_tilde() {
+        let mut config = Config::default();
+        config.allowed_paths = vec!["~/projects".to_string()];
+        let issues = config.validate();
+        // ~ で始まるパスはエラーにならない
+        assert!(
+            !issues
+                .iter()
+                .any(|i| matches!(i, ConfigIssue::Error(msg) if msg.contains("allowed_paths"))),
+            "~/... should be accepted: {:?}",
+            issues
+        );
+    }
+
+    #[test]
+    fn test_validate_allowed_paths_empty_string() {
+        let mut config = Config::default();
+        config.allowed_paths = vec!["".to_string()];
+        let issues = config.validate();
+        assert!(
+            issues
+                .iter()
+                .any(|i| matches!(i, ConfigIssue::Error(msg) if msg.contains("empty string")))
+        );
+    }
+
+    #[test]
+    fn test_validate_allowed_paths_nonexistent_warning() {
+        let mut config = Config::default();
+        config.allowed_paths = vec!["/nonexistent/path/12345".to_string()];
+        let issues = config.validate();
+        assert!(
+            issues
+                .iter()
+                .any(|i| matches!(i, ConfigIssue::Warning(msg) if msg.contains("does not exist")))
+        );
+    }
+
+    #[test]
+    fn test_validate_sensitive_paths_absolute() {
+        let mut config = Config::default();
+        config.sensitive_paths = vec!["/absolute/path".to_string()];
+        let issues = config.validate();
+        assert!(
+            issues
+                .iter()
+                .any(|i| matches!(i, ConfigIssue::Error(msg) if msg.contains("relative path")))
+        );
+    }
+
+    #[test]
+    fn test_validate_blocked_flags_no_prefix() {
+        let mut config = Config::default();
+        config.blocked_flags = vec!["privileged".to_string()];
+        let issues = config.validate();
+        assert!(
+            issues.iter().any(
+                |i| matches!(i, ConfigIssue::Error(msg) if msg.contains("must start with '--'"))
+            )
+        );
+    }
+
+    #[test]
+    fn test_validate_blocked_capabilities_invalid() {
+        let mut config = Config::default();
+        config.blocked_capabilities = vec!["not-a-capability!".to_string()];
+        let issues = config.validate();
+        assert!(issues.iter().any(
+            |i| matches!(i, ConfigIssue::Error(msg) if msg.contains("not a valid Linux capability"))
+        ));
+    }
+
+    #[test]
+    fn test_validate_blocked_capabilities_valid() {
+        let mut config = Config::default();
+        config.blocked_capabilities = vec![
+            "SYS_ADMIN".to_string(),
+            "NET_RAW".to_string(),
+            "ALL".to_string(),
+        ];
+        let issues = config.validate();
+        assert!(
+            !issues
+                .iter()
+                .any(|i| matches!(i, ConfigIssue::Error(msg) if msg.contains("capability"))),
+            "Valid capabilities should not produce errors: {:?}",
+            issues
+        );
+    }
+
+    #[test]
+    fn test_validate_allowed_images_empty_string() {
+        let mut config = Config::default();
+        config.allowed_images = vec!["".to_string()];
+        let issues = config.validate();
+        assert!(issues
+            .iter()
+            .any(|i| matches!(i, ConfigIssue::Error(msg) if msg.contains("allowed_images") && msg.contains("empty string"))));
+    }
+
+    #[test]
+    fn test_validate_duplicate_allowed_paths() {
+        let mut config = Config::default();
+        config.allowed_paths = vec!["/tmp".to_string(), "/tmp".to_string()];
+        let issues = config.validate();
+        assert!(
+            issues
+                .iter()
+                .any(|i| matches!(i, ConfigIssue::Warning(msg) if msg.contains("duplicated")))
+        );
+    }
+
+    #[test]
+    fn test_validate_audit_empty_jsonl_path() {
+        let mut config = Config::default();
+        config.audit.enabled = true;
+        config.audit.format = AuditFormat::Jsonl;
+        config.audit.jsonl_path = "".to_string();
+        let issues = config.validate();
+        assert!(
+            issues
+                .iter()
+                .any(|i| matches!(i, ConfigIssue::Error(msg) if msg.contains("audit.jsonl_path")))
+        );
+    }
+
+    #[test]
+    fn test_validate_audit_empty_otlp_path() {
+        let mut config = Config::default();
+        config.audit.enabled = true;
+        config.audit.format = AuditFormat::Otlp;
+        config.audit.otlp_path = "".to_string();
+        let issues = config.validate();
+        assert!(
+            issues
+                .iter()
+                .any(|i| matches!(i, ConfigIssue::Error(msg) if msg.contains("audit.otlp_path")))
+        );
+    }
+
+    #[test]
+    fn test_validate_audit_disabled_ignores_paths() {
+        let mut config = Config::default();
+        config.audit.enabled = false;
+        config.audit.jsonl_path = "".to_string();
+        config.audit.otlp_path = "".to_string();
+        let issues = config.validate();
+        // audit が無効なら空パスはエラーにならない
+        assert!(
+            !issues
+                .iter()
+                .any(|i| matches!(i, ConfigIssue::Error(msg) if msg.contains("audit"))),
+            "Disabled audit should not check paths: {:?}",
+            issues
+        );
+    }
+
+    #[test]
+    fn test_validate_multiple_errors() {
+        let mut config = Config::default();
+        config.allowed_paths = vec!["relative".to_string()];
+        config.sensitive_paths = vec!["/absolute".to_string()];
+        config.blocked_flags = vec!["noprefixed".to_string()];
+        let issues = config.validate();
+        let error_count = issues
+            .iter()
+            .filter(|i| matches!(i, ConfigIssue::Error(_)))
+            .count();
+        assert!(
+            error_count >= 3,
+            "Should have at least 3 errors: {:?}",
+            issues
+        );
+    }
+
+    #[test]
+    fn test_is_valid_capability_name() {
+        assert!(is_valid_capability_name("SYS_ADMIN"));
+        assert!(is_valid_capability_name("NET_RAW"));
+        assert!(is_valid_capability_name("ALL"));
+        assert!(is_valid_capability_name("sys_admin")); // lowercase accepted
+        assert!(!is_valid_capability_name(""));
+        assert!(!is_valid_capability_name("not-valid"));
+        assert!(!is_valid_capability_name("123"));
+        assert!(!is_valid_capability_name("SYS ADMIN"));
     }
 }
