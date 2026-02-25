@@ -113,9 +113,9 @@ pub fn run(args: &[String], config: &Config) -> i32 {
         Decision::Deny(reason) => {
             eprintln!("{}", reason);
             if verbose {
-                eprintln!(
-                    "  Tip: Check ~/.config/safe-docker/config.toml to adjust allowed paths or flags"
-                );
+                for tip in generate_tips(&reason) {
+                    eprintln!("  Tip: {}", tip);
+                }
             }
             if dry_run {
                 eprintln!("[safe-docker] Decision: deny");
@@ -277,6 +277,94 @@ fn find_docker_in_path() -> Option<PathBuf> {
         }
     }
     None
+}
+
+/// Deny/Ask 理由から具体的な対処法を生成する
+fn generate_tips(reason: &str) -> Vec<String> {
+    let mut tips = Vec::new();
+
+    // パス関連
+    if reason.contains("outside $HOME") {
+        tips.push(
+            "To allow this path, add it to allowed_paths in ~/.config/safe-docker/config.toml"
+                .to_string(),
+        );
+    }
+    if reason.contains("Docker socket mount is blocked") {
+        tips.push(
+            "To allow Docker socket access, set block_docker_socket = false in config.toml"
+                .to_string(),
+        );
+    }
+    if reason.contains("sensitive path") || reason.contains("credentials or keys") {
+        tips.push(
+            "Sensitive paths trigger a confirmation prompt. Consider using read-only mounts (:ro)"
+                .to_string(),
+        );
+    }
+
+    // 危険フラグ関連
+    if reason.contains("--privileged") {
+        tips.push(
+            "Instead of --privileged, grant only the specific capabilities needed with --cap-add"
+                .to_string(),
+        );
+    }
+    if reason.contains("--cap-add") {
+        tips.push(
+            "To allow this capability, remove it from blocked_capabilities in config.toml"
+                .to_string(),
+        );
+    }
+    if reason.contains("--security-opt") {
+        tips.push("Avoid disabling security profiles in production environments".to_string());
+    }
+    if reason.contains("--pid=host")
+        || reason.contains("--network=host")
+        || reason.contains("--userns=host")
+        || reason.contains("--ipc=host")
+        || reason.contains("--cgroupns=host")
+    {
+        tips.push(
+            "Host namespace sharing is blocked by default. Remove the flag from blocked_flags in config.toml to allow"
+                .to_string(),
+        );
+    }
+    if reason.contains("--device") {
+        tips.push(
+            "Direct device access is blocked for security. Consider using a volume mount instead"
+                .to_string(),
+        );
+    }
+
+    // Compose 関連
+    if reason.contains("Compose:") {
+        tips.push(
+            "Fix the flagged settings in your compose file, or adjust config.toml".to_string(),
+        );
+    }
+    if reason.contains("No compose file found") {
+        tips.push(
+            "Create compose.yml or docker-compose.yml, or specify the file with -f".to_string(),
+        );
+    }
+
+    // イメージ関連
+    if reason.contains("not in allowed_images") {
+        tips.push(
+            "Add the image to allowed_images in config.toml, or clear the list to allow any image"
+                .to_string(),
+        );
+    }
+
+    // フォールバック: 何もマッチしなかった場合
+    if tips.is_empty() {
+        tips.push(
+            "Check ~/.config/safe-docker/config.toml to adjust the security policy".to_string(),
+        );
+    }
+
+    tips
 }
 
 /// 本物の docker を exec で実行する（プロセス置換）
@@ -460,5 +548,94 @@ mod tests {
         let config = default_config();
         let decision = evaluate_docker_args(&args, &config, "/tmp", None);
         assert!(matches!(decision, Decision::Deny(_)));
+    }
+
+    // --- generate_tips テスト ---
+
+    #[test]
+    fn test_tips_outside_home() {
+        let tips = generate_tips("[safe-docker] Path is outside $HOME: /etc (resolved: /etc)");
+        assert!(tips.iter().any(|t| t.contains("allowed_paths")));
+    }
+
+    #[test]
+    fn test_tips_docker_socket() {
+        let tips =
+            generate_tips("[safe-docker] Docker socket mount is blocked: /var/run/docker.sock");
+        assert!(tips.iter().any(|t| t.contains("block_docker_socket")));
+    }
+
+    #[test]
+    fn test_tips_sensitive_path() {
+        let tips =
+            generate_tips("Mounting sensitive path ~/.ssh which may contain credentials or keys");
+        assert!(tips.iter().any(|t| t.contains("read-only")));
+    }
+
+    #[test]
+    fn test_tips_privileged() {
+        let tips = generate_tips("[safe-docker] --privileged is not allowed");
+        assert!(tips.iter().any(|t| t.contains("--cap-add")));
+    }
+
+    #[test]
+    fn test_tips_cap_add() {
+        let tips = generate_tips("[safe-docker] --cap-add=SYS_ADMIN is blocked");
+        assert!(tips.iter().any(|t| t.contains("blocked_capabilities")));
+    }
+
+    #[test]
+    fn test_tips_network_host() {
+        let tips = generate_tips("[safe-docker] --network=host is not allowed");
+        assert!(tips.iter().any(|t| t.contains("blocked_flags")));
+    }
+
+    #[test]
+    fn test_tips_device() {
+        let tips = generate_tips("[safe-docker] --device=/dev/sda is not allowed");
+        assert!(tips.iter().any(|t| t.contains("volume mount")));
+    }
+
+    #[test]
+    fn test_tips_compose() {
+        let tips = generate_tips("[safe-docker] Compose: 'privileged: true' is not allowed");
+        assert!(tips.iter().any(|t| t.contains("compose file")));
+    }
+
+    #[test]
+    fn test_tips_compose_not_found() {
+        let tips = generate_tips("[safe-docker] No compose file found");
+        assert!(tips.iter().any(|t| t.contains("compose.yml")));
+    }
+
+    #[test]
+    fn test_tips_image_not_allowed() {
+        let tips = generate_tips("Image 'nginx' is not in allowed_images");
+        assert!(tips.iter().any(|t| t.contains("allowed_images")));
+    }
+
+    #[test]
+    fn test_tips_security_opt() {
+        let tips = generate_tips(
+            "[safe-docker] --security-opt apparmor=unconfined disables a security profile",
+        );
+        assert!(tips.iter().any(|t| t.contains("security profiles")));
+    }
+
+    #[test]
+    fn test_tips_unknown_reason_fallback() {
+        let tips = generate_tips("some unknown error reason");
+        assert_eq!(tips.len(), 1);
+        assert!(tips[0].contains("config.toml"));
+    }
+
+    #[test]
+    fn test_tips_multiple_issues() {
+        // Multiple issues の場合、複数の Tip が返る
+        let reason = "[safe-docker] Multiple issues found:\n  - --privileged is not allowed\n  - Path is outside $HOME: /etc";
+        let tips = generate_tips(reason);
+        assert!(tips.len() >= 2, "Expected multiple tips, got: {:?}", tips);
+        assert!(tips.iter().any(|t| t.contains("--cap-add")));
+        assert!(tips.iter().any(|t| t.contains("allowed_paths")));
     }
 }
