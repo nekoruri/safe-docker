@@ -456,6 +456,81 @@ fn test_allow_docker_compose_exec() {
     );
 }
 
+// --- docker buildx build テスト ---
+
+#[test]
+fn test_allow_docker_buildx_build() {
+    let (stdout, exit_code) = run_hook(&make_bash_input("docker buildx build -t myapp ."));
+    assert_eq!(exit_code, 0);
+    assert!(
+        stdout.trim().is_empty(),
+        "docker buildx build . should allow"
+    );
+}
+
+#[test]
+fn test_deny_docker_buildx_build_outside_home() {
+    let (stdout, exit_code) = run_hook(&make_bash_input("docker buildx build -t myapp /etc"));
+    assert_eq!(exit_code, 0);
+    let output: serde_json::Value = serde_json::from_str(stdout.trim()).unwrap();
+    assert_eq!(
+        output["hookSpecificOutput"]["permissionDecision"].as_str(),
+        Some("deny"),
+        "docker buildx build with /etc context should deny"
+    );
+}
+
+// --- docker exec テスト ---
+
+#[test]
+fn test_deny_docker_exec_privileged() {
+    let (stdout, _) = run_hook(&make_bash_input(
+        "docker exec --privileged mycontainer bash",
+    ));
+    let output: serde_json::Value = serde_json::from_str(stdout.trim()).unwrap();
+    assert_eq!(
+        output["hookSpecificOutput"]["permissionDecision"].as_str(),
+        Some("deny"),
+        "docker exec --privileged should deny"
+    );
+}
+
+#[test]
+fn test_allow_docker_exec_no_flags() {
+    let (stdout, exit_code) = run_hook(&make_bash_input("docker exec mycontainer ls"));
+    assert_eq!(exit_code, 0);
+    assert!(
+        stdout.trim().is_empty(),
+        "docker exec without flags should allow"
+    );
+}
+
+// --- security-opt 拡充テスト ---
+
+#[test]
+fn test_deny_security_opt_systempaths_unconfined() {
+    let (stdout, _) = run_hook(&make_bash_input(
+        "docker run --security-opt systempaths=unconfined ubuntu",
+    ));
+    let output: serde_json::Value = serde_json::from_str(stdout.trim()).unwrap();
+    assert_eq!(
+        output["hookSpecificOutput"]["permissionDecision"].as_str(),
+        Some("deny")
+    );
+}
+
+#[test]
+fn test_deny_security_opt_no_new_privileges_false() {
+    let (stdout, _) = run_hook(&make_bash_input(
+        "docker run --security-opt no-new-privileges=false ubuntu",
+    ));
+    let output: serde_json::Value = serde_json::from_str(stdout.trim()).unwrap();
+    assert_eq!(
+        output["hookSpecificOutput"]["permissionDecision"].as_str(),
+        Some("deny")
+    );
+}
+
 // --- --check-config テスト ---
 
 fn run_check_config(extra_args: &[&str]) -> (String, String, i32) {
