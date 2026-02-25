@@ -293,10 +293,7 @@ impl Config {
         // audit パスの検証
         if self.audit.enabled {
             if self.audit.jsonl_path.is_empty()
-                && matches!(
-                    self.audit.format,
-                    AuditFormat::Jsonl | AuditFormat::Both
-                )
+                && matches!(self.audit.format, AuditFormat::Jsonl | AuditFormat::Both)
             {
                 issues.push(ConfigIssue::Error(
                     "audit.jsonl_path: empty string (required when format is 'jsonl' or 'both')"
@@ -324,9 +321,7 @@ fn is_valid_capability_name(name: &str) -> bool {
         return false;
     }
     let upper = name.to_uppercase();
-    upper
-        .chars()
-        .all(|c| c.is_ascii_uppercase() || c == '_')
+    upper.chars().all(|c| c.is_ascii_uppercase() || c == '_')
         && upper.starts_with(|c: char| c.is_ascii_uppercase())
 }
 
@@ -572,9 +567,11 @@ mod tests {
         let mut config = Config::default();
         config.allowed_paths = vec!["relative/path".to_string()];
         let issues = config.validate();
-        assert!(issues
-            .iter()
-            .any(|i| matches!(i, ConfigIssue::Error(msg) if msg.contains("not an absolute path"))));
+        assert!(
+            issues.iter().any(
+                |i| matches!(i, ConfigIssue::Error(msg) if msg.contains("not an absolute path"))
+            )
+        );
     }
 
     #[test]
@@ -597,9 +594,11 @@ mod tests {
         let mut config = Config::default();
         config.allowed_paths = vec!["".to_string()];
         let issues = config.validate();
-        assert!(issues
-            .iter()
-            .any(|i| matches!(i, ConfigIssue::Error(msg) if msg.contains("empty string"))));
+        assert!(
+            issues
+                .iter()
+                .any(|i| matches!(i, ConfigIssue::Error(msg) if msg.contains("empty string")))
+        );
     }
 
     #[test]
@@ -607,9 +606,11 @@ mod tests {
         let mut config = Config::default();
         config.allowed_paths = vec!["/nonexistent/path/12345".to_string()];
         let issues = config.validate();
-        assert!(issues
-            .iter()
-            .any(|i| matches!(i, ConfigIssue::Warning(msg) if msg.contains("does not exist"))));
+        assert!(
+            issues
+                .iter()
+                .any(|i| matches!(i, ConfigIssue::Warning(msg) if msg.contains("does not exist")))
+        );
     }
 
     #[test]
@@ -617,9 +618,11 @@ mod tests {
         let mut config = Config::default();
         config.sensitive_paths = vec!["/absolute/path".to_string()];
         let issues = config.validate();
-        assert!(issues
-            .iter()
-            .any(|i| matches!(i, ConfigIssue::Error(msg) if msg.contains("relative path"))));
+        assert!(
+            issues
+                .iter()
+                .any(|i| matches!(i, ConfigIssue::Error(msg) if msg.contains("relative path")))
+        );
     }
 
     #[test]
@@ -627,9 +630,11 @@ mod tests {
         let mut config = Config::default();
         config.blocked_flags = vec!["privileged".to_string()];
         let issues = config.validate();
-        assert!(issues
-            .iter()
-            .any(|i| matches!(i, ConfigIssue::Error(msg) if msg.contains("must start with '--'"))));
+        assert!(
+            issues.iter().any(
+                |i| matches!(i, ConfigIssue::Error(msg) if msg.contains("must start with '--'"))
+            )
+        );
     }
 
     #[test]
@@ -637,9 +642,9 @@ mod tests {
         let mut config = Config::default();
         config.blocked_capabilities = vec!["not-a-capability!".to_string()];
         let issues = config.validate();
-        assert!(issues
-            .iter()
-            .any(|i| matches!(i, ConfigIssue::Error(msg) if msg.contains("not a valid Linux capability"))));
+        assert!(issues.iter().any(
+            |i| matches!(i, ConfigIssue::Error(msg) if msg.contains("not a valid Linux capability"))
+        ));
     }
 
     #[test]
@@ -675,9 +680,11 @@ mod tests {
         let mut config = Config::default();
         config.allowed_paths = vec!["/tmp".to_string(), "/tmp".to_string()];
         let issues = config.validate();
-        assert!(issues
-            .iter()
-            .any(|i| matches!(i, ConfigIssue::Warning(msg) if msg.contains("duplicated"))));
+        assert!(
+            issues
+                .iter()
+                .any(|i| matches!(i, ConfigIssue::Warning(msg) if msg.contains("duplicated")))
+        );
     }
 
     #[test]
@@ -687,9 +694,11 @@ mod tests {
         config.audit.format = AuditFormat::Jsonl;
         config.audit.jsonl_path = "".to_string();
         let issues = config.validate();
-        assert!(issues
-            .iter()
-            .any(|i| matches!(i, ConfigIssue::Error(msg) if msg.contains("audit.jsonl_path"))));
+        assert!(
+            issues
+                .iter()
+                .any(|i| matches!(i, ConfigIssue::Error(msg) if msg.contains("audit.jsonl_path")))
+        );
     }
 
     #[test]
@@ -699,9 +708,11 @@ mod tests {
         config.audit.format = AuditFormat::Otlp;
         config.audit.otlp_path = "".to_string();
         let issues = config.validate();
-        assert!(issues
-            .iter()
-            .any(|i| matches!(i, ConfigIssue::Error(msg) if msg.contains("audit.otlp_path"))));
+        assert!(
+            issues
+                .iter()
+                .any(|i| matches!(i, ConfigIssue::Error(msg) if msg.contains("audit.otlp_path")))
+        );
     }
 
     #[test]

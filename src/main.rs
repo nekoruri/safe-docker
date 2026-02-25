@@ -116,7 +116,11 @@ fn run_check_config(args: &[String]) -> i32 {
         Some(path) => match config::Config::load_from(path) {
             Ok(c) => (c, format!("{}", path.display())),
             Err(e) => {
-                eprintln!("Error: failed to load config from {}: {}", path.display(), e);
+                eprintln!(
+                    "Error: failed to load config from {}: {}",
+                    path.display(),
+                    e
+                );
                 return 1;
             }
         },
@@ -203,10 +207,7 @@ fn print_config_summary(config: &config::Config) {
         }
     );
     eprintln!("  block_docker_socket:  {}", config.block_docker_socket);
-    eprintln!(
-        "  audit.enabled:        {}",
-        config.audit.enabled
-    );
+    eprintln!("  audit.enabled:        {}", config.audit.enabled);
     if config.audit.enabled {
         eprintln!("  audit.format:         {:?}", config.audit.format);
         eprintln!("  audit.jsonl_path:     {}", config.audit.jsonl_path);
