@@ -26,6 +26,8 @@ pub struct AuditEvent {
     pub pid: u32,
     pub host_name: String,
     pub environment: String,
+    /// 実行モード ("hook" or "wrapper")
+    pub mode: String,
 }
 
 /// DockerCommand からメタデータを蓄積するコレクター
@@ -73,6 +75,7 @@ pub fn build_event(
     collector: &AuditCollector,
     session_id: Option<&str>,
     cwd: &str,
+    mode: &str,
 ) -> AuditEvent {
     let timestamp_unix_nano = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -101,6 +104,7 @@ pub fn build_event(
         pid: std::process::id(),
         host_name,
         environment,
+        mode: mode.to_string(),
     }
 }
 
@@ -196,6 +200,7 @@ fn write_otlp(event: &AuditEvent, path: &str) {
         ));
     }
     attributes.push(kv_int("process.pid", event.pid as i64));
+    attributes.push(kv_string("safe_docker.mode", &event.mode));
 
     let body = event.reason.as_ref().map(|r| AnyValue {
         value: Some(any_value::Value::StringValue(r.clone())),
@@ -375,6 +380,7 @@ mod tests {
             &collector,
             Some("session-123"),
             "/home/user/project",
+            "hook",
         );
 
         assert_eq!(event.command, "docker run ubuntu");
@@ -382,9 +388,50 @@ mod tests {
         assert!(event.reason.is_none());
         assert_eq!(event.session_id.as_deref(), Some("session-123"));
         assert_eq!(event.cwd, "/home/user/project");
+        assert_eq!(event.mode, "hook");
         assert!(event.timestamp_unix_nano > 0);
         assert!(event.pid > 0);
         assert!(!event.host_name.is_empty());
+    }
+
+    #[test]
+    fn test_build_event_wrapper_mode() {
+        let collector = AuditCollector::new();
+        let event = build_event(
+            "docker run ubuntu",
+            "allow",
+            None,
+            &collector,
+            None,
+            "/home/user/project",
+            "wrapper",
+        );
+
+        assert_eq!(event.mode, "wrapper");
+    }
+
+    #[test]
+    fn test_event_mode_in_jsonl_output() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("mode-test.jsonl");
+        let path_str = path.to_str().unwrap();
+
+        let collector = AuditCollector::new();
+        let event = build_event(
+            "docker ps",
+            "allow",
+            None,
+            &collector,
+            None,
+            "/tmp",
+            "wrapper",
+        );
+
+        write_jsonl(&event, path_str);
+
+        let content = std::fs::read_to_string(&path).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(content.trim()).unwrap();
+        assert_eq!(parsed["mode"], "wrapper");
     }
 
     #[test]
@@ -397,6 +444,7 @@ mod tests {
             &collector,
             None,
             "/tmp",
+            "hook",
         );
 
         assert_eq!(event.decision, "deny");
@@ -492,6 +540,7 @@ mod tests {
             &collector,
             Some("sess-456"),
             "/home/user",
+            "hook",
         );
 
         assert_eq!(event.docker_subcommand.as_deref(), Some("run"));
@@ -510,7 +559,15 @@ mod tests {
         let path_str = path.to_str().unwrap();
 
         let collector = AuditCollector::new();
-        let event = build_event("docker run ubuntu", "allow", None, &collector, None, "/tmp");
+        let event = build_event(
+            "docker run ubuntu",
+            "allow",
+            None,
+            &collector,
+            None,
+            "/tmp",
+            "hook",
+        );
 
         write_jsonl(&event, path_str);
 
@@ -531,7 +588,15 @@ mod tests {
         let path_str = path.to_str().unwrap();
 
         let collector = AuditCollector::new();
-        let event1 = build_event("docker run ubuntu", "allow", None, &collector, None, "/tmp");
+        let event1 = build_event(
+            "docker run ubuntu",
+            "allow",
+            None,
+            &collector,
+            None,
+            "/tmp",
+            "hook",
+        );
         let event2 = build_event(
             "docker run --privileged ubuntu",
             "deny",
@@ -539,6 +604,7 @@ mod tests {
             &collector,
             None,
             "/tmp",
+            "hook",
         );
 
         write_jsonl(&event1, path_str);
@@ -556,7 +622,7 @@ mod tests {
         let path_str = path.to_str().unwrap();
 
         let collector = AuditCollector::new();
-        let event = build_event("docker ps", "allow", None, &collector, None, "/tmp");
+        let event = build_event("docker ps", "allow", None, &collector, None, "/tmp", "hook");
 
         write_jsonl(&event, path_str);
 
@@ -576,7 +642,15 @@ mod tests {
         };
 
         let collector = AuditCollector::new();
-        let event = build_event("docker run alpine", "allow", None, &collector, None, "/tmp");
+        let event = build_event(
+            "docker run alpine",
+            "allow",
+            None,
+            &collector,
+            None,
+            "/tmp",
+            "hook",
+        );
 
         emit(&event, &config);
 
@@ -599,7 +673,7 @@ mod tests {
     #[test]
     fn test_event_serialization() {
         let collector = AuditCollector::new();
-        let event = build_event("docker ps", "allow", None, &collector, None, "/tmp");
+        let event = build_event("docker ps", "allow", None, &collector, None, "/tmp", "hook");
 
         let json = serde_json::to_string(&event).unwrap();
         // None フィールドはスキップされること
@@ -649,6 +723,7 @@ mod tests {
                 &collector,
                 Some("session-otlp"),
                 "/home/user",
+                "hook",
             );
 
             write_otlp(&event, path_str);
@@ -686,7 +761,15 @@ mod tests {
             };
 
             let collector = AuditCollector::new();
-            let event = build_event("docker run alpine", "allow", None, &collector, None, "/tmp");
+            let event = build_event(
+                "docker run alpine",
+                "allow",
+                None,
+                &collector,
+                None,
+                "/tmp",
+                "hook",
+            );
 
             emit(&event, &config);
 
@@ -707,7 +790,7 @@ mod tests {
             };
 
             let collector = AuditCollector::new();
-            let event = build_event("docker ps", "allow", None, &collector, None, "/tmp");
+            let event = build_event("docker ps", "allow", None, &collector, None, "/tmp", "hook");
 
             emit(&event, &config);
 

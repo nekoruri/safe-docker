@@ -23,6 +23,34 @@ pub enum AuditFormat {
     Both,
 }
 
+/// 非対話環境での ask の扱い
+#[derive(Debug, Clone, Default, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum NonInteractiveAsk {
+    #[default]
+    Deny,
+    Allow,
+}
+
+/// ラッパーモード設定
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct WrapperConfig {
+    /// 本物の docker バイナリパス（空=自動検出）
+    pub docker_path: String,
+    /// 非対話環境での ask の扱い ("deny" / "allow")
+    pub non_interactive_ask: NonInteractiveAsk,
+}
+
+impl Default for WrapperConfig {
+    fn default() -> Self {
+        Self {
+            docker_path: String::new(),
+            non_interactive_ask: NonInteractiveAsk::Deny,
+        }
+    }
+}
+
 /// 監査ログ設定
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
@@ -113,6 +141,10 @@ pub struct Config {
     /// 監査ログ設定
     #[serde(default)]
     pub audit: AuditConfig,
+
+    /// ラッパーモード設定
+    #[serde(default)]
+    pub wrapper: WrapperConfig,
 }
 
 impl Default for Config {
@@ -125,6 +157,7 @@ impl Default for Config {
             allowed_images: Vec::new(),
             block_docker_socket: true,
             audit: AuditConfig::default(),
+            wrapper: WrapperConfig::default(),
         }
     }
 }
