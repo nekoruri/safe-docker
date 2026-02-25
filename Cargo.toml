@@ -1,8 +1,8 @@
 [package]
 name = "safe-docker"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2024"
-description = "Claude Code PreToolUse hook to prevent Docker bind mounts outside $HOME"
+description = "Safe Docker command wrapper and Claude Code hook for container security"
 license = "MIT OR Apache-2.0"
 
 [features]
