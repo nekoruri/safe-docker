@@ -64,7 +64,7 @@ Docker デーモンの認可プラグイン。全 Docker クライアントに�
 | 項目 | 状態 | 理由 |
 |------|------|------|
 | **名前付きボリュームのドライバ** | 未検出 | CLI レベルでは `docker volume create --driver=local --opt device=/etc` を事前に実行されると検出不能 |
-| **bind propagation** | 未検出 | `:shared`, `:rshared` による伝播は追加リスクだがパース未対応 |
+| **bind propagation** | **検出済み (v0.4.0)** | `:shared`, `:rshared` は deny、`:slave` 等は許可 |
 | **`DOCKER_HOST` 環境変数** | パス検証のみ | リモート Docker ホストへの接続自体はブロックしない（コマンド内容は検証する） |
 
 ## Fail-safe 設計

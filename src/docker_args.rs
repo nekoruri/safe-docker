@@ -63,6 +63,14 @@ pub enum DangerousFlag {
     UsernsHost,
     CgroupnsHost,
     IpcHost,
+    /// --network=container:NAME (コンテナ間ネットワーク共有)
+    NetworkContainer(String),
+    /// --pid=container:NAME (コンテナ間プロセス名前空間共有)
+    PidContainer(String),
+    /// --ipc=container:NAME (コンテナ間IPC名前空間共有)
+    IpcContainer(String),
+    /// --mount bind-propagation=shared/rshared (マウント伝搬)
+    MountPropagation(String),
 }
 
 impl std::fmt::Display for DangerousFlag {
@@ -78,6 +86,14 @@ impl std::fmt::Display for DangerousFlag {
             DangerousFlag::UsernsHost => write!(f, "--userns=host"),
             DangerousFlag::CgroupnsHost => write!(f, "--cgroupns=host"),
             DangerousFlag::IpcHost => write!(f, "--ipc=host"),
+            DangerousFlag::NetworkContainer(name) => {
+                write!(f, "--network=container:{}", name)
+            }
+            DangerousFlag::PidContainer(name) => write!(f, "--pid=container:{}", name),
+            DangerousFlag::IpcContainer(name) => write!(f, "--ipc=container:{}", name),
+            DangerousFlag::MountPropagation(mode) => {
+                write!(f, "bind-propagation={}", mode)
+            }
         }
     }
 }
@@ -106,8 +122,14 @@ static MOUNT_TARGET_RE: LazyLock<Regex> =
 static MOUNT_READONLY_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?:^|,)(?:readonly|ro)(?:=true)?(?:,|$)").unwrap());
 
+static MOUNT_PROPAGATION_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?:^|,)bind-propagation=(shared|rshared|slave|rslave|private|rprivate)(?:,|$)")
+        .unwrap()
+});
+
 /// -v / --volume フラグの値からバインドマウントをパースする
-fn parse_volume_flag(value: &str) -> Option<BindMount> {
+/// propagation が検出された場合は dangerous_flags に追加
+fn parse_volume_flag(value: &str, dangerous_flags: &mut Vec<DangerousFlag>) -> Option<BindMount> {
     // 名前付きボリュームはスキップ (ホストパスは / か . か ~ で始まる)
     // format: host_path:container_path[:opts]
     let parts: Vec<&str> = value.splitn(3, ':').collect();
@@ -125,9 +147,15 @@ fn parse_volume_flag(value: &str) -> Option<BindMount> {
         return None; // 名前付きボリューム
     }
 
-    let read_only = parts
-        .get(2)
-        .is_some_and(|opts| opts.split(',').any(|o| o == "ro"));
+    let opts = parts.get(2).copied().unwrap_or("");
+    let read_only = opts.split(',').any(|o| o == "ro");
+
+    // propagation の検出 (shared, rshared)
+    for opt in opts.split(',') {
+        if matches!(opt, "shared" | "rshared") {
+            dangerous_flags.push(DangerousFlag::MountPropagation(opt.to_string()));
+        }
+    }
 
     Some(BindMount {
         host_path: host.to_string(),
@@ -138,7 +166,8 @@ fn parse_volume_flag(value: &str) -> Option<BindMount> {
 }
 
 /// --mount フラグの値からバインドマウントをパースする
-fn parse_mount_flag(value: &str) -> Option<BindMount> {
+/// propagation が検出された場合は dangerous_flags に追加
+fn parse_mount_flag(value: &str, dangerous_flags: &mut Vec<DangerousFlag>) -> Option<BindMount> {
     // type=bind のみ対象
     if !MOUNT_TYPE_BIND_RE.is_match(value) {
         return None;
@@ -156,6 +185,14 @@ fn parse_mount_flag(value: &str) -> Option<BindMount> {
         .unwrap_or_default();
 
     let read_only = MOUNT_READONLY_RE.is_match(value);
+
+    // bind-propagation の検出
+    if let Some(caps) = MOUNT_PROPAGATION_RE.captures(value) {
+        let mode = caps.get(1).unwrap().as_str();
+        if matches!(mode, "shared" | "rshared") {
+            dangerous_flags.push(DangerousFlag::MountPropagation(mode.to_string()));
+        }
+    }
 
     Some(BindMount {
         host_path: source,
@@ -277,19 +314,19 @@ pub fn parse_docker_args(args: &[&str]) -> DockerCommand {
 
         // -v / --volume
         if (arg == "-v" || arg == "--volume") && i + 1 < args.len() {
-            if let Some(bm) = parse_volume_flag(args[i + 1]) {
+            if let Some(bm) = parse_volume_flag(args[i + 1], &mut cmd.dangerous_flags) {
                 cmd.bind_mounts.push(bm);
             }
             i += 2;
             continue;
         } else if let Some(value) = arg.strip_prefix("--volume=") {
-            if let Some(bm) = parse_volume_flag(value) {
+            if let Some(bm) = parse_volume_flag(value, &mut cmd.dangerous_flags) {
                 cmd.bind_mounts.push(bm);
             }
             i += 1;
             continue;
         } else if let Some(value) = arg.strip_prefix("-v=") {
-            if let Some(bm) = parse_volume_flag(value) {
+            if let Some(bm) = parse_volume_flag(value, &mut cmd.dangerous_flags) {
                 cmd.bind_mounts.push(bm);
             }
             i += 1;
@@ -299,14 +336,14 @@ pub fn parse_docker_args(args: &[&str]) -> DockerCommand {
         // --mount
         if arg == "--mount" {
             if i + 1 < args.len() {
-                if let Some(bm) = parse_mount_flag(args[i + 1]) {
+                if let Some(bm) = parse_mount_flag(args[i + 1], &mut cmd.dangerous_flags) {
                     cmd.bind_mounts.push(bm);
                 }
                 i += 2;
                 continue;
             }
         } else if let Some(value) = arg.strip_prefix("--mount=") {
-            if let Some(bm) = parse_mount_flag(value) {
+            if let Some(bm) = parse_mount_flag(value, &mut cmd.dangerous_flags) {
                 cmd.bind_mounts.push(bm);
             }
             i += 1;
@@ -352,26 +389,51 @@ pub fn parse_docker_args(args: &[&str]) -> DockerCommand {
 
         // --pid
         if arg == "--pid" {
-            if i + 1 < args.len() && args[i + 1] == "host" {
-                cmd.dangerous_flags.push(DangerousFlag::PidHost);
+            if i + 1 < args.len() {
+                let val = args[i + 1];
+                if val == "host" {
+                    cmd.dangerous_flags.push(DangerousFlag::PidHost);
+                } else if let Some(name) = val.strip_prefix("container:") {
+                    cmd.dangerous_flags
+                        .push(DangerousFlag::PidContainer(name.to_string()));
+                }
                 i += 2;
                 continue;
             }
-        } else if arg == "--pid=host" {
-            cmd.dangerous_flags.push(DangerousFlag::PidHost);
+        } else if let Some(val) = arg.strip_prefix("--pid=") {
+            if val == "host" {
+                cmd.dangerous_flags.push(DangerousFlag::PidHost);
+            } else if let Some(name) = val.strip_prefix("container:") {
+                cmd.dangerous_flags
+                    .push(DangerousFlag::PidContainer(name.to_string()));
+            }
             i += 1;
             continue;
         }
 
         // --network / --net
         if arg == "--network" || arg == "--net" {
-            if i + 1 < args.len() && args[i + 1] == "host" {
-                cmd.dangerous_flags.push(DangerousFlag::NetworkHost);
+            if i + 1 < args.len() {
+                let val = args[i + 1];
+                if val == "host" {
+                    cmd.dangerous_flags.push(DangerousFlag::NetworkHost);
+                } else if let Some(name) = val.strip_prefix("container:") {
+                    cmd.dangerous_flags
+                        .push(DangerousFlag::NetworkContainer(name.to_string()));
+                }
                 i += 2;
                 continue;
             }
-        } else if arg == "--network=host" || arg == "--net=host" {
-            cmd.dangerous_flags.push(DangerousFlag::NetworkHost);
+        } else if let Some(val) = arg
+            .strip_prefix("--network=")
+            .or_else(|| arg.strip_prefix("--net="))
+        {
+            if val == "host" {
+                cmd.dangerous_flags.push(DangerousFlag::NetworkHost);
+            } else if let Some(name) = val.strip_prefix("container:") {
+                cmd.dangerous_flags
+                    .push(DangerousFlag::NetworkContainer(name.to_string()));
+            }
             i += 1;
             continue;
         }
@@ -434,13 +496,24 @@ pub fn parse_docker_args(args: &[&str]) -> DockerCommand {
 
         // --ipc
         if arg == "--ipc" {
-            if i + 1 < args.len() && args[i + 1] == "host" {
-                cmd.dangerous_flags.push(DangerousFlag::IpcHost);
+            if i + 1 < args.len() {
+                let val = args[i + 1];
+                if val == "host" {
+                    cmd.dangerous_flags.push(DangerousFlag::IpcHost);
+                } else if let Some(name) = val.strip_prefix("container:") {
+                    cmd.dangerous_flags
+                        .push(DangerousFlag::IpcContainer(name.to_string()));
+                }
                 i += 2;
                 continue;
             }
-        } else if arg == "--ipc=host" {
-            cmd.dangerous_flags.push(DangerousFlag::IpcHost);
+        } else if let Some(val) = arg.strip_prefix("--ipc=") {
+            if val == "host" {
+                cmd.dangerous_flags.push(DangerousFlag::IpcHost);
+            } else if let Some(name) = val.strip_prefix("container:") {
+                cmd.dangerous_flags
+                    .push(DangerousFlag::IpcContainer(name.to_string()));
+            }
             i += 1;
             continue;
         }
@@ -624,7 +697,7 @@ fn parse_compose_args(args: &[&str], start: usize, cmd: &mut DockerCommand) {
                 // compose run のフラグから -v を抽出
                 while i < args.len() {
                     if (args[i] == "-v" || args[i] == "--volume") && i + 1 < args.len() {
-                        if let Some(bm) = parse_volume_flag(args[i + 1]) {
+                        if let Some(bm) = parse_volume_flag(args[i + 1], &mut cmd.dangerous_flags) {
                             cmd.bind_mounts.push(bm);
                         }
                         i += 2;
@@ -715,7 +788,7 @@ mod tests {
 
     #[test]
     fn test_parse_volume_short() {
-        let bm = parse_volume_flag("/host/path:/container/path").unwrap();
+        let bm = parse_volume_flag("/host/path:/container/path", &mut vec![]).unwrap();
         assert_eq!(bm.host_path, "/host/path");
         assert_eq!(bm.container_path, "/container/path");
         assert!(!bm.read_only);
@@ -723,30 +796,34 @@ mod tests {
 
     #[test]
     fn test_parse_volume_readonly() {
-        let bm = parse_volume_flag("/host:/container:ro").unwrap();
+        let bm = parse_volume_flag("/host:/container:ro", &mut vec![]).unwrap();
         assert!(bm.read_only);
     }
 
     #[test]
     fn test_parse_volume_named() {
-        assert!(parse_volume_flag("myvolume:/container").is_none());
+        assert!(parse_volume_flag("myvolume:/container", &mut vec![]).is_none());
     }
 
     #[test]
     fn test_parse_volume_home() {
-        let bm = parse_volume_flag("~/projects:/app").unwrap();
+        let bm = parse_volume_flag("~/projects:/app", &mut vec![]).unwrap();
         assert_eq!(bm.host_path, "~/projects");
     }
 
     #[test]
     fn test_parse_volume_relative() {
-        let bm = parse_volume_flag("./src:/app/src").unwrap();
+        let bm = parse_volume_flag("./src:/app/src", &mut vec![]).unwrap();
         assert_eq!(bm.host_path, "./src");
     }
 
     #[test]
     fn test_parse_mount_bind() {
-        let bm = parse_mount_flag("type=bind,source=/host/path,target=/container/path").unwrap();
+        let bm = parse_mount_flag(
+            "type=bind,source=/host/path,target=/container/path",
+            &mut vec![],
+        )
+        .unwrap();
         assert_eq!(bm.host_path, "/host/path");
         assert_eq!(bm.container_path, "/container/path");
         assert!(!bm.read_only);
@@ -754,18 +831,22 @@ mod tests {
 
     #[test]
     fn test_parse_mount_readonly() {
-        let bm = parse_mount_flag("type=bind,source=/host,target=/container,readonly").unwrap();
+        let bm = parse_mount_flag(
+            "type=bind,source=/host,target=/container,readonly",
+            &mut vec![],
+        )
+        .unwrap();
         assert!(bm.read_only);
     }
 
     #[test]
     fn test_parse_mount_volume_type() {
-        assert!(parse_mount_flag("type=volume,source=myvol,target=/data").is_none());
+        assert!(parse_mount_flag("type=volume,source=myvol,target=/data", &mut vec![]).is_none());
     }
 
     #[test]
     fn test_parse_mount_src_dst() {
-        let bm = parse_mount_flag("type=bind,src=/host,dst=/container").unwrap();
+        let bm = parse_mount_flag("type=bind,src=/host,dst=/container", &mut vec![]).unwrap();
         assert_eq!(bm.host_path, "/host");
         assert_eq!(bm.container_path, "/container");
     }
@@ -1136,5 +1217,178 @@ mod tests {
         let cmd = parse_docker_args(&args);
         assert_eq!(cmd.subcommand, DockerSubcommand::Exec);
         assert!(cmd.dangerous_flags.is_empty());
+    }
+
+    // --- A: コンテナ間 namespace 共有テスト ---
+
+    #[test]
+    fn test_parse_network_container_equals() {
+        let args = vec!["run", "--network=container:db", "ubuntu"];
+        let cmd = parse_docker_args(&args);
+        assert!(matches!(
+            &cmd.dangerous_flags[0],
+            DangerousFlag::NetworkContainer(n) if n == "db"
+        ));
+    }
+
+    #[test]
+    fn test_parse_network_container_space() {
+        let args = vec!["run", "--network", "container:web", "ubuntu"];
+        let cmd = parse_docker_args(&args);
+        assert!(matches!(
+            &cmd.dangerous_flags[0],
+            DangerousFlag::NetworkContainer(n) if n == "web"
+        ));
+    }
+
+    #[test]
+    fn test_parse_net_container_equals() {
+        let args = vec!["run", "--net=container:redis", "ubuntu"];
+        let cmd = parse_docker_args(&args);
+        assert!(matches!(
+            &cmd.dangerous_flags[0],
+            DangerousFlag::NetworkContainer(n) if n == "redis"
+        ));
+    }
+
+    #[test]
+    fn test_parse_pid_container_equals() {
+        let args = vec!["run", "--pid=container:app", "ubuntu"];
+        let cmd = parse_docker_args(&args);
+        assert!(matches!(
+            &cmd.dangerous_flags[0],
+            DangerousFlag::PidContainer(n) if n == "app"
+        ));
+    }
+
+    #[test]
+    fn test_parse_pid_container_space() {
+        let args = vec!["run", "--pid", "container:app", "ubuntu"];
+        let cmd = parse_docker_args(&args);
+        assert!(matches!(
+            &cmd.dangerous_flags[0],
+            DangerousFlag::PidContainer(n) if n == "app"
+        ));
+    }
+
+    #[test]
+    fn test_parse_ipc_container_equals() {
+        let args = vec!["run", "--ipc=container:shm", "ubuntu"];
+        let cmd = parse_docker_args(&args);
+        assert!(matches!(
+            &cmd.dangerous_flags[0],
+            DangerousFlag::IpcContainer(n) if n == "shm"
+        ));
+    }
+
+    #[test]
+    fn test_parse_ipc_container_space() {
+        let args = vec!["run", "--ipc", "container:shm", "ubuntu"];
+        let cmd = parse_docker_args(&args);
+        assert!(matches!(
+            &cmd.dangerous_flags[0],
+            DangerousFlag::IpcContainer(n) if n == "shm"
+        ));
+    }
+
+    #[test]
+    fn test_parse_network_bridge_no_flag() {
+        // bridge は通常のネットワークモードなので検出しない
+        let args = vec!["run", "--network=bridge", "ubuntu"];
+        let cmd = parse_docker_args(&args);
+        assert!(cmd.dangerous_flags.is_empty());
+    }
+
+    // --- B: mount propagation テスト ---
+
+    #[test]
+    fn test_parse_volume_propagation_shared() {
+        let mut flags = vec![];
+        parse_volume_flag("/host:/container:shared", &mut flags);
+        assert!(matches!(
+            &flags[0],
+            DangerousFlag::MountPropagation(m) if m == "shared"
+        ));
+    }
+
+    #[test]
+    fn test_parse_volume_propagation_rshared() {
+        let mut flags = vec![];
+        parse_volume_flag("/host:/container:ro,rshared", &mut flags);
+        assert!(matches!(
+            &flags[0],
+            DangerousFlag::MountPropagation(m) if m == "rshared"
+        ));
+    }
+
+    #[test]
+    fn test_parse_volume_propagation_private_safe() {
+        // private は安全なのでフラグを出さない
+        let mut flags = vec![];
+        parse_volume_flag("/host:/container:private", &mut flags);
+        assert!(flags.is_empty());
+    }
+
+    #[test]
+    fn test_parse_mount_propagation_shared() {
+        let mut flags = vec![];
+        parse_mount_flag(
+            "type=bind,source=/host,target=/container,bind-propagation=shared",
+            &mut flags,
+        );
+        assert!(matches!(
+            &flags[0],
+            DangerousFlag::MountPropagation(m) if m == "shared"
+        ));
+    }
+
+    #[test]
+    fn test_parse_mount_propagation_rshared() {
+        let mut flags = vec![];
+        parse_mount_flag(
+            "type=bind,source=/host,target=/container,bind-propagation=rshared",
+            &mut flags,
+        );
+        assert!(matches!(
+            &flags[0],
+            DangerousFlag::MountPropagation(m) if m == "rshared"
+        ));
+    }
+
+    #[test]
+    fn test_parse_mount_propagation_private_safe() {
+        let mut flags = vec![];
+        parse_mount_flag(
+            "type=bind,source=/host,target=/container,bind-propagation=private",
+            &mut flags,
+        );
+        assert!(flags.is_empty());
+    }
+
+    #[test]
+    fn test_parse_docker_run_propagation_detected() {
+        let args = vec!["run", "-v", "/host:/container:shared", "ubuntu"];
+        let cmd = parse_docker_args(&args);
+        assert!(
+            cmd.dangerous_flags
+                .iter()
+                .any(|f| matches!(f, DangerousFlag::MountPropagation(_)))
+        );
+    }
+
+    #[test]
+    fn test_parse_docker_run_mount_propagation_detected() {
+        let args = vec![
+            "run",
+            "--mount",
+            "type=bind,source=/host,target=/mnt,bind-propagation=rshared",
+            "ubuntu",
+        ];
+        let cmd = parse_docker_args(&args);
+        assert!(
+            cmd.dangerous_flags
+                .iter()
+                .any(|f| matches!(f, DangerousFlag::MountPropagation(_)))
+        );
     }
 }

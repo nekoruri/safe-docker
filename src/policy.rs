@@ -80,6 +80,30 @@ pub fn evaluate(cmd: &DockerCommand, config: &Config, cwd: &str) -> Decision {
                 deny_reasons
                     .push("--ipc=host is not allowed (exposes host IPC namespace)".to_string());
             }
+            DangerousFlag::NetworkContainer(name) => {
+                deny_reasons.push(format!(
+                    "--network=container:{} is not allowed (shares network namespace with another container)",
+                    name
+                ));
+            }
+            DangerousFlag::PidContainer(name) => {
+                deny_reasons.push(format!(
+                    "--pid=container:{} is not allowed (shares process namespace with another container)",
+                    name
+                ));
+            }
+            DangerousFlag::IpcContainer(name) => {
+                deny_reasons.push(format!(
+                    "--ipc=container:{} is not allowed (shares IPC namespace with another container)",
+                    name
+                ));
+            }
+            DangerousFlag::MountPropagation(mode) => {
+                deny_reasons.push(format!(
+                    "bind-propagation={} is not allowed (mount changes propagate to the host)",
+                    mode
+                ));
+            }
         }
     }
 
@@ -157,6 +181,24 @@ pub fn evaluate(cmd: &DockerCommand, config: &Config, cwd: &str) -> Decision {
                 deny_reasons.push(
                     "Compose: 'ipc: host' is not allowed (exposes host IPC namespace)".to_string(),
                 );
+            }
+            DangerousFlag::NetworkContainer(name) => {
+                deny_reasons.push(format!(
+                    "Compose: 'network_mode: container:{}' is not allowed (shares network namespace with another container)",
+                    name
+                ));
+            }
+            DangerousFlag::PidContainer(name) => {
+                deny_reasons.push(format!(
+                    "Compose: 'pid: container:{}' is not allowed (shares process namespace with another container)",
+                    name
+                ));
+            }
+            DangerousFlag::IpcContainer(name) => {
+                deny_reasons.push(format!(
+                    "Compose: 'ipc: container:{}' is not allowed (shares IPC namespace with another container)",
+                    name
+                ));
             }
             _ => {}
         }

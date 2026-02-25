@@ -91,6 +91,10 @@ OPA Docker AuthZ プラグインを最終防衛線として併用可能。safe-d
 | `--ipc=host` | ホストの IPC 名前空間へのアクセス |
 | `--device` | ホストデバイスの直接マウント |
 | `--volumes-from` | 他コンテナからの危険なマウント継承 (ask) |
+| `--network=container:NAME` | 他コンテナのネットワーク名前空間への参加 |
+| `--pid=container:NAME` | 他コンテナのプロセス名前空間への参加 |
+| `--ipc=container:NAME` | 他コンテナの IPC 名前空間への参加 |
+| `-v ...:shared` / `bind-propagation=shared` | マウント変更がホストに伝搬 |
 
 ### 3. シェル間接実行の検出（Hook モードのみ）
 
@@ -291,7 +295,7 @@ safe-docker --check-config --config /path/to/config.toml
 allowed_paths = []
 
 # $HOME 配下で ask にする機密パス (ホームからの相対)
-sensitive_paths = [".ssh", ".aws", ".gnupg", ".docker", ".kube", ".config/gcloud", ".claude"]
+sensitive_paths = [".ssh", ".aws", ".gnupg", ".docker", ".kube", ".config/gcloud", ".claude", ".terraform", ".vault-token", ".config/gh", ".npmrc", ".pypirc"]
 
 # ブロックする危険フラグ
 blocked_flags = ["--privileged", "--pid=host", "--network=host"]
