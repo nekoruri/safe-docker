@@ -375,3 +375,115 @@ fn test_wrapper_v_flag_is_docker_volume() {
         stdout
     );
 }
+
+// --- --docker-path CLI オプション ---
+
+#[test]
+fn test_wrapper_docker_path_cli_option() {
+    // --docker-path で指定した docker バイナリを使用する
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_safe-docker"));
+    cmd.args(["--docker-path", "/bin/echo", "run", "ubuntu", "hello"]);
+    cmd.env_remove("SAFE_DOCKER_ACTIVE");
+    cmd.env_remove("SAFE_DOCKER_BYPASS");
+    cmd.env_remove("SAFE_DOCKER_DOCKER_PATH");
+    let output = cmd
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .expect("Failed to spawn safe-docker");
+
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    let exit_code = output.status.code().unwrap_or(-1);
+    assert_eq!(exit_code, 0);
+    // --docker-path は docker に渡されず、/bin/echo が docker として使われる
+    assert!(
+        stdout.contains("run ubuntu hello"),
+        "Expected echo output from --docker-path override, got: {}",
+        stdout
+    );
+    assert!(
+        !stdout.contains("--docker-path"),
+        "--docker-path should be stripped from docker args, got: {}",
+        stdout
+    );
+}
+
+#[test]
+fn test_wrapper_docker_path_not_passed_to_docker() {
+    // --docker-path の値が docker 引数として渡されないことを確認
+    let (stdout, _stderr, exit_code) = run_wrapper(&["--docker-path", "/bin/echo", "ps"]);
+    assert_eq!(exit_code, 0);
+    assert!(
+        !stdout.contains("--docker-path"),
+        "--docker-path should not appear in docker args: {}",
+        stdout
+    );
+    assert!(
+        !stdout.contains("/bin/echo"),
+        "docker path value should not appear in docker args: {}",
+        stdout
+    );
+}
+
+// --- --dry-run + ask ---
+
+#[test]
+fn test_wrapper_dry_run_ask() {
+    let mount_arg = format!("{}/.ssh:/keys", home_dir());
+    let (_stdout, stderr, exit_code) =
+        run_wrapper(&["--dry-run", "run", "-v", &mount_arg, "ubuntu"]);
+    assert_eq!(exit_code, 0);
+    assert!(
+        stderr.contains("Decision: ask"),
+        "Expected ask decision in dry-run, got: {}",
+        stderr
+    );
+}
+
+// --- --help にオプション情報が含まれる ---
+
+#[test]
+fn test_wrapper_help_contains_docker_path() {
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_safe-docker"));
+    cmd.arg("--help");
+    let output = cmd
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .expect("Failed to spawn safe-docker");
+
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    assert!(
+        stderr.contains("--docker-path"),
+        "Help should mention --docker-path: {}",
+        stderr
+    );
+}
+
+// --- --check-config にラッパー設定が含まれる ---
+
+#[test]
+fn test_check_config_shows_wrapper_settings() {
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_safe-docker"));
+    cmd.arg("--check-config");
+    let output = cmd
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .expect("Failed to spawn safe-docker");
+
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    assert!(
+        stderr.contains("wrapper.docker_path"),
+        "check-config should show wrapper.docker_path: {}",
+        stderr
+    );
+    assert!(
+        stderr.contains("wrapper.non_interactive_ask"),
+        "check-config should show wrapper.non_interactive_ask: {}",
+        stderr
+    );
+}

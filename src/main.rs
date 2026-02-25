@@ -32,6 +32,9 @@ fn main() {
         return;
     }
 
+    // --docker-path オプションの抽出
+    let docker_path_override = extract_option(&args, "--docker-path");
+
     // モード判別:
     // 1. argv[0] が "docker" / "docker-compose" → ラッパーモード（透過）
     // 2. CLI 引数あり → ラッパーモード（明示的）
@@ -40,13 +43,19 @@ fn main() {
 
     match mode {
         RunMode::Wrapper(docker_args) => {
-            let config = match config::Config::load() {
+            let mut config = match config::Config::load() {
                 Ok(config) => config,
                 Err(e) => {
                     log::warn!("Failed to load config, using defaults: {}", e);
                     config::Config::default()
                 }
             };
+            // --docker-path CLI オプションで上書き
+            if let Some(path) = docker_path_override {
+                config.wrapper.docker_path = path;
+            }
+            // --docker-path を docker 引数から除去
+            let docker_args: Vec<String> = remove_option_from_args(&docker_args, "--docker-path");
             std::process::exit(wrapper::run(&docker_args, &config));
         }
         RunMode::Hook => {
@@ -116,11 +125,12 @@ fn print_help() {
     eprintln!("  echo '{{...}}' | safe-docker                 Hook mode (Claude Code)");
     eprintln!();
     eprintln!("OPTIONS:");
-    eprintln!("  --dry-run       Show decision without executing docker");
-    eprintln!("  --verbose       Show detailed decision reasons");
-    eprintln!("  --check-config  Validate configuration file");
-    eprintln!("  --help, -h      Show this help message");
-    eprintln!("  --version       Show version");
+    eprintln!("  --dry-run              Show decision without executing docker");
+    eprintln!("  --verbose              Show detailed decision reasons");
+    eprintln!("  --docker-path PATH     Override docker binary path");
+    eprintln!("  --check-config         Validate configuration file");
+    eprintln!("  --help, -h             Show this help message");
+    eprintln!("  --version              Show version");
     eprintln!();
     eprintln!("ENVIRONMENT:");
     eprintln!("  SAFE_DOCKER_DOCKER_PATH  Path to real docker binary");
@@ -132,6 +142,32 @@ fn print_help() {
     eprintln!("  safe-docker run -v ~/projects:/app ubuntu");
     eprintln!("  safe-docker compose up");
     eprintln!("  safe-docker --dry-run run --privileged ubuntu");
+    eprintln!("  safe-docker --docker-path /usr/bin/docker run ubuntu");
+}
+
+/// --key value 形式のオプションを args から抽出する
+fn extract_option(args: &[String], key: &str) -> Option<String> {
+    args.windows(2)
+        .find(|w| w[0] == key)
+        .map(|w| w[1].clone())
+}
+
+/// --key value 形式のオプションを args から除去する
+fn remove_option_from_args(args: &[String], key: &str) -> Vec<String> {
+    let mut result = Vec::new();
+    let mut skip_next = false;
+    for arg in args {
+        if skip_next {
+            skip_next = false;
+            continue;
+        }
+        if arg == key {
+            skip_next = true;
+            continue;
+        }
+        result.push(arg.clone());
+    }
+    result
 }
 
 /// hook モードの実行（従来のメインロジック）
@@ -220,6 +256,7 @@ fn run_hook_mode() {
             collector,
             input.session_id.as_deref(),
             &cwd,
+            "hook",
         );
         audit::emit(&event, &config.audit);
     }
@@ -334,6 +371,18 @@ fn print_config_summary(config: &config::Config) {
         eprintln!("  audit.jsonl_path:     {}", config.audit.jsonl_path);
         eprintln!("  audit.otlp_path:      {}", config.audit.otlp_path);
     }
+    eprintln!(
+        "  wrapper.docker_path:  {}",
+        if config.wrapper.docker_path.is_empty() {
+            "(auto-detect)".to_string()
+        } else {
+            config.wrapper.docker_path.clone()
+        }
+    );
+    eprintln!(
+        "  wrapper.non_interactive_ask: {:?}",
+        config.wrapper.non_interactive_ask
+    );
     eprintln!();
 }
 

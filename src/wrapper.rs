@@ -48,6 +48,7 @@ pub fn run(args: &[String], config: &Config) -> i32 {
     let verbose = args.iter().any(|a| a == "--verbose");
 
     // safe-docker 固有オプションを除去して docker に渡す引数を構築
+    // (--docker-path は main.rs で事前に除去済み)
     let docker_args: Vec<String> = args
         .iter()
         .filter(|a| *a != "--dry-run" && *a != "--verbose")
@@ -74,7 +75,7 @@ pub fn run(args: &[String], config: &Config) -> i32 {
             Decision::Ask(r) => ("ask", Some(r.as_str())),
         };
 
-        let event = audit::build_event(&command_str, decision_str, reason, collector, None, &cwd);
+        let event = audit::build_event(&command_str, decision_str, reason, collector, None, &cwd, "wrapper");
         audit::emit(&event, &config.audit);
     }
 
