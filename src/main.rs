@@ -8,10 +8,17 @@ pub mod path_validator;
 pub mod policy;
 pub mod shell;
 
+use config::ConfigIssue;
 use hook::Decision;
 
 fn main() {
     env_logger::init();
+
+    // --check-config サブコマンド
+    let args: Vec<String> = std::env::args().collect();
+    if args.iter().any(|a| a == "--check-config") {
+        std::process::exit(run_check_config(&args));
+    }
 
     // パニック時は deny (fail-safe)
     let default_hook = std::panic::take_hook();
@@ -95,6 +102,117 @@ fn main() {
         );
         audit::emit(&event, &config.audit);
     }
+}
+
+/// --check-config サブコマンドの実行
+fn run_check_config(args: &[String]) -> i32 {
+    // --config <path> オプションの処理
+    let config_path = args
+        .windows(2)
+        .find(|w| w[0] == "--config")
+        .map(|w| std::path::PathBuf::from(&w[1]));
+
+    let (config, config_source) = match &config_path {
+        Some(path) => match config::Config::load_from(path) {
+            Ok(c) => (c, format!("{}", path.display())),
+            Err(e) => {
+                eprintln!("Error: failed to load config from {}: {}", path.display(), e);
+                return 1;
+            }
+        },
+        None => {
+            let default_path = dirs::config_dir()
+                .unwrap_or_else(|| std::path::PathBuf::from("~/.config"))
+                .join("safe-docker")
+                .join("config.toml");
+            let source = if default_path.exists() {
+                format!("{}", default_path.display())
+            } else {
+                "(default - no config file found)".to_string()
+            };
+            match config::Config::load() {
+                Ok(c) => (c, source),
+                Err(e) => {
+                    eprintln!("Error: failed to load config: {}", e);
+                    return 1;
+                }
+            }
+        }
+    };
+
+    eprintln!("Config source: {}", config_source);
+    eprintln!();
+
+    // 現在の設定を表示
+    print_config_summary(&config);
+
+    // バリデーション実行
+    let issues = config.validate();
+
+    if issues.is_empty() {
+        eprintln!("Validation: OK (no issues found)");
+        return 0;
+    }
+
+    eprintln!("Validation issues:");
+    let mut has_errors = false;
+    for issue in &issues {
+        match issue {
+            ConfigIssue::Error(msg) => {
+                eprintln!("  ERROR: {}", msg);
+                has_errors = true;
+            }
+            ConfigIssue::Warning(msg) => {
+                eprintln!("  WARNING: {}", msg);
+            }
+        }
+    }
+
+    if has_errors { 1 } else { 0 }
+}
+
+/// 設定のサマリーを stderr に出力
+fn print_config_summary(config: &config::Config) {
+    eprintln!("Current configuration:");
+    eprintln!(
+        "  allowed_paths:        [{}]",
+        if config.allowed_paths.is_empty() {
+            "(none)".to_string()
+        } else {
+            config.allowed_paths.join(", ")
+        }
+    );
+    eprintln!(
+        "  sensitive_paths:      [{}]",
+        config.sensitive_paths.join(", ")
+    );
+    eprintln!(
+        "  blocked_flags:        [{}]",
+        config.blocked_flags.join(", ")
+    );
+    eprintln!(
+        "  blocked_capabilities: [{}]",
+        config.blocked_capabilities.join(", ")
+    );
+    eprintln!(
+        "  allowed_images:       [{}]",
+        if config.allowed_images.is_empty() {
+            "(any)".to_string()
+        } else {
+            config.allowed_images.join(", ")
+        }
+    );
+    eprintln!("  block_docker_socket:  {}", config.block_docker_socket);
+    eprintln!(
+        "  audit.enabled:        {}",
+        config.audit.enabled
+    );
+    if config.audit.enabled {
+        eprintln!("  audit.format:         {:?}", config.audit.format);
+        eprintln!("  audit.jsonl_path:     {}", config.audit.jsonl_path);
+        eprintln!("  audit.otlp_path:      {}", config.audit.otlp_path);
+    }
+    eprintln!();
 }
 
 /// コマンド文字列を解析して最終的な Decision を返す (既存 API 互換)

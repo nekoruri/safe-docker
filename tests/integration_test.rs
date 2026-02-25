@@ -455,3 +455,96 @@ fn test_allow_docker_compose_exec() {
         "compose exec should allow (no file analysis)"
     );
 }
+
+// --- --check-config テスト ---
+
+fn run_check_config(extra_args: &[&str]) -> (String, String, i32) {
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_safe-docker"));
+    cmd.arg("--check-config");
+    for arg in extra_args {
+        cmd.arg(arg);
+    }
+    let output = cmd
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .expect("Failed to spawn safe-docker");
+
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    let exit_code = output.status.code().unwrap_or(-1);
+    (stdout, stderr, exit_code)
+}
+
+#[test]
+fn test_check_config_default() {
+    // デフォルト設定（ファイルなし）は正常終了
+    let (_stdout, stderr, exit_code) = run_check_config(&[]);
+    assert_eq!(exit_code, 0, "Default config should pass: {}", stderr);
+    assert!(stderr.contains("Validation: OK"));
+}
+
+#[test]
+fn test_check_config_valid_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let config_path = dir.path().join("config.toml");
+    std::fs::write(
+        &config_path,
+        r#"
+            allowed_paths = ["/tmp"]
+            sensitive_paths = [".ssh", ".aws"]
+            blocked_flags = ["--privileged"]
+            blocked_capabilities = ["SYS_ADMIN"]
+            allowed_images = ["ubuntu"]
+        "#,
+    )
+    .unwrap();
+
+    let (_stdout, stderr, exit_code) =
+        run_check_config(&["--config", config_path.to_str().unwrap()]);
+    assert_eq!(exit_code, 0, "Valid config should pass: {}", stderr);
+    assert!(stderr.contains("Validation: OK") || stderr.contains("WARNING"));
+}
+
+#[test]
+fn test_check_config_invalid_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let config_path = dir.path().join("config.toml");
+    std::fs::write(
+        &config_path,
+        r#"
+            allowed_paths = ["relative/path"]
+            sensitive_paths = ["/absolute"]
+            blocked_flags = ["noprefixed"]
+        "#,
+    )
+    .unwrap();
+
+    let (_stdout, stderr, exit_code) =
+        run_check_config(&["--config", config_path.to_str().unwrap()]);
+    assert_eq!(exit_code, 1, "Invalid config should fail: {}", stderr);
+    assert!(stderr.contains("ERROR"));
+}
+
+#[test]
+fn test_check_config_shows_summary() {
+    let (_stdout, stderr, _exit_code) = run_check_config(&[]);
+    assert!(
+        stderr.contains("Current configuration:"),
+        "Should show config summary: {}",
+        stderr
+    );
+    assert!(stderr.contains("block_docker_socket:"));
+}
+
+#[test]
+fn test_check_config_broken_toml() {
+    let dir = tempfile::tempdir().unwrap();
+    let config_path = dir.path().join("config.toml");
+    std::fs::write(&config_path, "{{invalid toml").unwrap();
+
+    let (_stdout, stderr, exit_code) =
+        run_check_config(&["--config", config_path.to_str().unwrap()]);
+    assert_eq!(exit_code, 1, "Broken TOML should fail: {}", stderr);
+    assert!(stderr.contains("Error"));
+}
