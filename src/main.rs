@@ -7,6 +7,7 @@ pub mod hook;
 pub mod path_validator;
 pub mod policy;
 pub mod shell;
+pub mod wrapper;
 
 use config::ConfigIssue;
 use hook::Decision;
@@ -14,12 +15,127 @@ use hook::Decision;
 fn main() {
     env_logger::init();
 
-    // --check-config サブコマンド
     let args: Vec<String> = std::env::args().collect();
+
+    // --check-config サブコマンド
     if args.iter().any(|a| a == "--check-config") {
         std::process::exit(run_check_config(&args));
     }
 
+    // --help / --version (ラッパーモード固有)
+    if args.iter().any(|a| a == "--help" || a == "-h") && !is_docker_help_request(&args) {
+        print_help();
+        return;
+    }
+    if args.len() == 2 && args[1] == "--version" {
+        println!("safe-docker {}", env!("CARGO_PKG_VERSION"));
+        return;
+    }
+
+    // モード判別:
+    // 1. argv[0] が "docker" / "docker-compose" → ラッパーモード（透過）
+    // 2. CLI 引数あり → ラッパーモード（明示的）
+    // 3. CLI 引数なし → hook モード（stdin JSON）
+    let mode = detect_mode(&args);
+
+    match mode {
+        RunMode::Wrapper(docker_args) => {
+            let config = match config::Config::load() {
+                Ok(config) => config,
+                Err(e) => {
+                    log::warn!("Failed to load config, using defaults: {}", e);
+                    config::Config::default()
+                }
+            };
+            std::process::exit(wrapper::run(&docker_args, &config));
+        }
+        RunMode::Hook => {
+            run_hook_mode();
+        }
+    }
+}
+
+/// 実行モード
+enum RunMode {
+    /// ラッパーモード: docker 引数の配列
+    Wrapper(Vec<String>),
+    /// hook モード: stdin から JSON を読み取る
+    Hook,
+}
+
+/// argv[0] と引数からモードを判別する
+fn detect_mode(args: &[String]) -> RunMode {
+    // argv[0] のファイル名を取得
+    let argv0 = args
+        .first()
+        .and_then(|a| std::path::Path::new(a).file_name())
+        .and_then(|n| n.to_str())
+        .unwrap_or("");
+
+    // argv[0] が "docker" / "docker-compose" → 透過ラッパーモード
+    if argv0 == "docker" {
+        // args[1..] をそのまま docker 引数として渡す
+        return RunMode::Wrapper(args[1..].to_vec());
+    }
+    if argv0 == "docker-compose" {
+        // "compose" を先頭に挿入して正規化
+        let mut docker_args = vec!["compose".to_string()];
+        docker_args.extend_from_slice(&args[1..]);
+        return RunMode::Wrapper(docker_args);
+    }
+
+    // CLI 引数があればラッパーモード（明示的）
+    if args.len() > 1 {
+        return RunMode::Wrapper(args[1..].to_vec());
+    }
+
+    // 引数なし → hook モード
+    RunMode::Hook
+}
+
+/// docker 自体の --help を要求しているか判定
+/// (safe-docker run --help のような場合は docker の help)
+fn is_docker_help_request(args: &[String]) -> bool {
+    // args[1] が docker サブコマンドや docker 引数の場合
+    args.len() > 2
+        && args.get(1).is_some_and(|a| {
+            !a.starts_with('-')
+                || a == "--help"
+                || a == "-h"
+        })
+        && args.iter().skip(2).any(|a| a == "--help" || a == "-h")
+}
+
+/// ヘルプメッセージを表示
+fn print_help() {
+    eprintln!("safe-docker {} - Safe Docker command wrapper", env!("CARGO_PKG_VERSION"));
+    eprintln!();
+    eprintln!("USAGE:");
+    eprintln!("  safe-docker [OPTIONS] <docker-args>...     Wrapper mode");
+    eprintln!("  safe-docker --check-config [--config PATH] Check configuration");
+    eprintln!("  echo '{{...}}' | safe-docker                 Hook mode (Claude Code)");
+    eprintln!();
+    eprintln!("OPTIONS:");
+    eprintln!("  --dry-run       Show decision without executing docker");
+    eprintln!("  --verbose       Show detailed decision reasons");
+    eprintln!("  --check-config  Validate configuration file");
+    eprintln!("  --help, -h      Show this help message");
+    eprintln!("  --version       Show version");
+    eprintln!();
+    eprintln!("ENVIRONMENT:");
+    eprintln!("  SAFE_DOCKER_DOCKER_PATH  Path to real docker binary");
+    eprintln!("  SAFE_DOCKER_ASK          Non-interactive ask handling (deny/allow)");
+    eprintln!("  SAFE_DOCKER_BYPASS       Set to 1 to skip safety checks");
+    eprintln!("  SAFE_DOCKER_ACTIVE       Internal: recursion prevention");
+    eprintln!();
+    eprintln!("EXAMPLES:");
+    eprintln!("  safe-docker run -v ~/projects:/app ubuntu");
+    eprintln!("  safe-docker compose up");
+    eprintln!("  safe-docker --dry-run run --privileged ubuntu");
+}
+
+/// hook モードの実行（従来のメインロジック）
+fn run_hook_mode() {
     // パニック時は deny (fail-safe)
     let default_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
