@@ -1,6 +1,6 @@
 [package]
 name = "safe-docker"
-version = "0.3.0"
+version = "0.4.0"
 edition = "2024"
 description = "Safe Docker command wrapper and Claude Code hook for container security"
 license = "MIT OR Apache-2.0"
