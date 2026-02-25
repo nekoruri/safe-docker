@@ -136,26 +136,43 @@ OPA Docker AuthZ プラグインを最終防衛線として併用可能。safe-d
 [Releases ページ](https://github.com/nekoruri/safe-docker/releases/latest) からプラットフォームに合ったバイナリをダウンロード:
 
 ```bash
-# Linux (x86_64)
-curl -L https://github.com/nekoruri/safe-docker/releases/latest/download/safe-docker-x86_64-unknown-linux-gnu.tar.gz | tar xz
-cp safe-docker ~/.local/bin/
+# GitHub CLI でダウンロード + 検証
+gh release download --repo nekoruri/safe-docker \
+  --pattern "safe-docker-*-x86_64-unknown-linux-gnu.tar.gz"
 
-# Linux (aarch64)
-curl -L https://github.com/nekoruri/safe-docker/releases/latest/download/safe-docker-aarch64-unknown-linux-gnu.tar.gz | tar xz
-cp safe-docker ~/.local/bin/
+# アーティファクトの署名を検証 (Sigstore ベース)
+gh attestation verify safe-docker-*-x86_64-unknown-linux-gnu.tar.gz \
+  --repo nekoruri/safe-docker
 
-# macOS (Apple Silicon)
-curl -L https://github.com/nekoruri/safe-docker/releases/latest/download/safe-docker-aarch64-apple-darwin.tar.gz | tar xz
-cp safe-docker ~/.local/bin/
-
-# macOS (Intel)
-curl -L https://github.com/nekoruri/safe-docker/releases/latest/download/safe-docker-x86_64-apple-darwin.tar.gz | tar xz
-cp safe-docker ~/.local/bin/
+# 展開・配置
+tar xzf safe-docker-*-x86_64-unknown-linux-gnu.tar.gz
+cp safe-docker-*/safe-docker ~/.local/bin/
 ```
+
+> リリースバイナリには GitHub Artifact Attestations (Sigstore ベース) による署名済みビルド証明が付与されています。
+> 検証の仕組みについては [docs/SUPPLY_CHAIN_SECURITY.md](docs/SUPPLY_CHAIN_SECURITY.md) を参照してください。
+
+<details>
+<summary>各プラットフォームのダウンロード URL</summary>
+
+| プラットフォーム | パターン |
+|----------------|---------|
+| Linux (x86_64) | `safe-docker-*-x86_64-unknown-linux-gnu.tar.gz` |
+| Linux (aarch64) | `safe-docker-*-aarch64-unknown-linux-gnu.tar.gz` |
+| macOS (Apple Silicon) | `safe-docker-*-aarch64-apple-darwin.tar.gz` |
+| macOS (Intel) | `safe-docker-*-x86_64-apple-darwin.tar.gz` |
+
+</details>
 
 ### ソースからビルド
 
 ```bash
+# Git リポジトリから直接インストール
+cargo install --git https://github.com/nekoruri/safe-docker.git
+
+# またはクローンしてビルド
+git clone https://github.com/nekoruri/safe-docker.git
+cd safe-docker
 cargo build --release
 cp target/release/safe-docker ~/.local/bin/
 ```
