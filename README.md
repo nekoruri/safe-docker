@@ -136,6 +136,30 @@ block_docker_socket = true
 
 ## インストール
 
+### GitHub Releases からダウンロード（推奨）
+
+[Releases ページ](https://github.com/nekoruri/safe-docker/releases/latest) からプラットフォームに合ったバイナリをダウンロード:
+
+```bash
+# Linux (x86_64)
+curl -L https://github.com/nekoruri/safe-docker/releases/latest/download/safe-docker-v0.1.0-x86_64-unknown-linux-gnu.tar.gz | tar xz
+cp safe-docker-v0.1.0-x86_64-unknown-linux-gnu/safe-docker ~/.local/bin/
+
+# Linux (aarch64)
+curl -L https://github.com/nekoruri/safe-docker/releases/latest/download/safe-docker-v0.1.0-aarch64-unknown-linux-gnu.tar.gz | tar xz
+cp safe-docker-v0.1.0-aarch64-unknown-linux-gnu/safe-docker ~/.local/bin/
+
+# macOS (Apple Silicon)
+curl -L https://github.com/nekoruri/safe-docker/releases/latest/download/safe-docker-v0.1.0-aarch64-apple-darwin.tar.gz | tar xz
+cp safe-docker-v0.1.0-aarch64-apple-darwin/safe-docker ~/.local/bin/
+
+# macOS (Intel)
+curl -L https://github.com/nekoruri/safe-docker/releases/latest/download/safe-docker-v0.1.0-x86_64-apple-darwin.tar.gz | tar xz
+cp safe-docker-v0.1.0-x86_64-apple-darwin/safe-docker ~/.local/bin/
+```
+
+### ソースからビルド
+
 ```bash
 cargo build --release
 cp target/release/safe-docker ~/.local/bin/
@@ -211,3 +235,7 @@ docker plugin disable opa-docker-authz
 # 2. または daemon.json から authorization-plugins を削除して Docker 再起動
 sudo systemctl restart docker
 ```
+
+## ライセンス
+
+MIT OR Apache-2.0 のデュアルライセンスで提供されています。詳細は [LICENSE-MIT](LICENSE-MIT) および [LICENSE-APACHE](LICENSE-APACHE) を参照してください。

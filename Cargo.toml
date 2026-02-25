@@ -3,6 +3,7 @@ name = "safe-docker"
 version = "0.1.0"
 edition = "2024"
 description = "Claude Code PreToolUse hook to prevent Docker bind mounts outside $HOME"
+license = "MIT OR Apache-2.0"
 
 [features]
 default = []
