@@ -14,6 +14,9 @@ fn is_dangerous_security_opt(opt: &str) -> bool {
         || opt.contains("systempaths:unconfined")
         || opt.contains("no-new-privileges=false")
         || opt.contains("no-new-privileges:false")
+        // CIS 5.2: SELinux ラベリングの無効化
+        || opt.contains("label=disable")
+        || opt.contains("label:disable")
 }
 
 /// Docker コマンドに対してポリシーを適用し、最終的な Decision を返す
@@ -107,6 +110,28 @@ pub fn evaluate(cmd: &DockerCommand, config: &Config, cwd: &str) -> Decision {
                     "bind-propagation={} is not allowed (mount changes propagate to the host)",
                     mode
                 ));
+            }
+            DangerousFlag::Sysctl(val) => {
+                let key = val.split('=').next().unwrap_or(val);
+                if key.starts_with("kernel.") {
+                    deny_reasons.push(format!(
+                        "--sysctl {} is not allowed (kernel parameter manipulation can compromise host security)",
+                        val
+                    ));
+                } else if key.starts_with("net.") {
+                    ask_reasons.push(format!(
+                        "--sysctl {} modifies network settings; verify this is intended",
+                        val
+                    ));
+                }
+            }
+            DangerousFlag::AddHost(val) => {
+                if val.contains("169.254.169.254") || val.contains("fd00:ec2::254") {
+                    ask_reasons.push(format!(
+                        "--add-host {} points to the cloud metadata endpoint; this could be used for credential theft",
+                        val
+                    ));
+                }
             }
         }
     }
@@ -208,6 +233,20 @@ pub fn evaluate(cmd: &DockerCommand, config: &Config, cwd: &str) -> Decision {
                     "Compose: 'ipc: container:{}' is not allowed (shares IPC namespace with another container)",
                     name
                 ));
+            }
+            DangerousFlag::Sysctl(val) => {
+                let key = val.split('=').next().unwrap_or(val);
+                if key.starts_with("kernel.") {
+                    deny_reasons.push(format!(
+                        "Compose: sysctl '{}' is not allowed (kernel parameter manipulation can compromise host security)",
+                        val
+                    ));
+                } else if key.starts_with("net.") {
+                    ask_reasons.push(format!(
+                        "Compose: sysctl '{}' modifies network settings; verify this is intended",
+                        val
+                    ));
+                }
             }
             _ => {}
         }
@@ -905,6 +944,172 @@ mod tests {
         assert!(
             matches!(decision, Decision::Deny(_)),
             "BPF should be denied by default: {:?}",
+            decision
+        );
+    }
+
+    // --- Phase 5d: --sysctl ---
+
+    #[test]
+    fn test_evaluate_sysctl_kernel_deny() {
+        let config = Config::default();
+        let cmd = DockerCommand {
+            subcommand: DockerSubcommand::Run,
+            bind_mounts: vec![],
+            dangerous_flags: vec![DangerousFlag::Sysctl(
+                "kernel.core_pattern=|/tmp/exploit".to_string(),
+            )],
+            compose_file: None,
+            image: Some("ubuntu".to_string()),
+            host_paths: vec![],
+        };
+        let decision = evaluate(&cmd, &config, "/tmp");
+        assert!(
+            matches!(decision, Decision::Deny(_)),
+            "kernel.* sysctl should be denied: {:?}",
+            decision
+        );
+    }
+
+    #[test]
+    fn test_evaluate_sysctl_net_ask() {
+        let config = Config::default();
+        let cmd = DockerCommand {
+            subcommand: DockerSubcommand::Run,
+            bind_mounts: vec![],
+            dangerous_flags: vec![DangerousFlag::Sysctl("net.ipv4.ip_forward=1".to_string())],
+            compose_file: None,
+            image: Some("ubuntu".to_string()),
+            host_paths: vec![],
+        };
+        let decision = evaluate(&cmd, &config, "/tmp");
+        assert!(
+            matches!(decision, Decision::Ask(_)),
+            "net.* sysctl should ask: {:?}",
+            decision
+        );
+    }
+
+    #[test]
+    fn test_evaluate_sysctl_safe_allow() {
+        let config = Config::default();
+        let cmd = DockerCommand {
+            subcommand: DockerSubcommand::Run,
+            bind_mounts: vec![],
+            dangerous_flags: vec![DangerousFlag::Sysctl("fs.mqueue.msg_max=100".to_string())],
+            compose_file: None,
+            image: Some("ubuntu".to_string()),
+            host_paths: vec![],
+        };
+        let decision = evaluate(&cmd, &config, "/tmp");
+        assert_eq!(
+            decision,
+            Decision::Allow,
+            "Non-kernel non-net sysctl should be allowed: {:?}",
+            decision
+        );
+    }
+
+    // --- Phase 5d: --add-host ---
+
+    #[test]
+    fn test_evaluate_add_host_metadata_ask() {
+        let config = Config::default();
+        let cmd = DockerCommand {
+            subcommand: DockerSubcommand::Run,
+            bind_mounts: vec![],
+            dangerous_flags: vec![DangerousFlag::AddHost(
+                "metadata:169.254.169.254".to_string(),
+            )],
+            compose_file: None,
+            image: Some("ubuntu".to_string()),
+            host_paths: vec![],
+        };
+        let decision = evaluate(&cmd, &config, "/tmp");
+        assert!(
+            matches!(decision, Decision::Ask(_)),
+            "add-host with metadata IP should ask: {:?}",
+            decision
+        );
+    }
+
+    #[test]
+    fn test_evaluate_add_host_normal_allow() {
+        let config = Config::default();
+        let cmd = DockerCommand {
+            subcommand: DockerSubcommand::Run,
+            bind_mounts: vec![],
+            dangerous_flags: vec![DangerousFlag::AddHost("myhost:192.168.1.1".to_string())],
+            compose_file: None,
+            image: Some("ubuntu".to_string()),
+            host_paths: vec![],
+        };
+        let decision = evaluate(&cmd, &config, "/tmp");
+        assert_eq!(
+            decision,
+            Decision::Allow,
+            "add-host with normal IP should be allowed: {:?}",
+            decision
+        );
+    }
+
+    #[test]
+    fn test_evaluate_add_host_ipv6_metadata_ask() {
+        let config = Config::default();
+        let cmd = DockerCommand {
+            subcommand: DockerSubcommand::Run,
+            bind_mounts: vec![],
+            dangerous_flags: vec![DangerousFlag::AddHost(
+                "ec2-metadata:fd00:ec2::254".to_string(),
+            )],
+            compose_file: None,
+            image: Some("ubuntu".to_string()),
+            host_paths: vec![],
+        };
+        let decision = evaluate(&cmd, &config, "/tmp");
+        assert!(
+            matches!(decision, Decision::Ask(_)),
+            "add-host with IPv6 metadata IP should ask: {:?}",
+            decision
+        );
+    }
+
+    // --- Phase 5d: CIS 5.2 label:disable ---
+
+    #[test]
+    fn test_evaluate_security_opt_label_disable() {
+        let config = Config::default();
+        let cmd = DockerCommand {
+            subcommand: DockerSubcommand::Run,
+            bind_mounts: vec![],
+            dangerous_flags: vec![DangerousFlag::SecurityOpt("label=disable".to_string())],
+            compose_file: None,
+            image: Some("ubuntu".to_string()),
+            host_paths: vec![],
+        };
+        let decision = evaluate(&cmd, &config, "/tmp");
+        assert!(
+            matches!(decision, Decision::Deny(_)),
+            "label=disable should be denied (CIS 5.2): {:?}",
+            decision
+        );
+    }
+
+    #[test]
+    fn test_evaluate_security_opt_label_disable_colon() {
+        let config = Config::default();
+        let cmd = DockerCommand {
+            subcommand: DockerSubcommand::Run,
+            bind_mounts: vec![],
+            dangerous_flags: vec![DangerousFlag::SecurityOpt("label:disable".to_string())],
+            compose_file: None,
+            image: Some("ubuntu".to_string()),
+            host_paths: vec![],
+        };
+        let decision = evaluate(&cmd, &config, "/tmp");
+        assert!(
+            matches!(decision, Decision::Deny(_)),
+            "label:disable should be denied (CIS 5.2): {:?}",
             decision
         );
     }

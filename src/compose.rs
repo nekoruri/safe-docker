@@ -195,6 +195,34 @@ fn extract_service_dangerous_settings(service: &serde_yml::Value, flags: &mut Ve
             }
         }
     }
+
+    // sysctls: list or mapping format
+    if let Some(sysctls) = service.get("sysctls") {
+        match sysctls {
+            // List format: ["key=value", ...]
+            serde_yml::Value::Sequence(seq) => {
+                for item in seq {
+                    if let Some(s) = item.as_str() {
+                        flags.push(DangerousFlag::Sysctl(s.to_string()));
+                    }
+                }
+            }
+            // Mapping format: { key: value, ... }
+            serde_yml::Value::Mapping(map) => {
+                for (key, value) in map {
+                    if let Some(key_str) = key.as_str() {
+                        let val_str = value
+                            .as_str()
+                            .map(|s| s.to_string())
+                            .or_else(|| value.as_i64().map(|n| n.to_string()))
+                            .unwrap_or_default();
+                        flags.push(DangerousFlag::Sysctl(format!("{}={}", key_str, val_str)));
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
 }
 
 /// Short syntax のボリュームをパース: "host:container[:opts]"
@@ -714,5 +742,87 @@ services:
     fn test_parse_compose_nonexistent_file() {
         let result = extract_bind_mounts(std::path::Path::new("/nonexistent/compose.yml"));
         assert!(result.is_err());
+    }
+
+    // --- Phase 5d: Compose sysctls ---
+
+    #[test]
+    fn test_parse_compose_sysctls_list() {
+        let yaml_str = r#"
+services:
+  web:
+    image: ubuntu
+    sysctls:
+      - kernel.shmmax=65536
+      - net.core.somaxconn=1024
+"#;
+        let dir = tempfile::tempdir().unwrap();
+        let compose_path = dir.path().join("compose.yml");
+        std::fs::write(&compose_path, yaml_str).unwrap();
+
+        let analysis = analyze_compose(&compose_path).unwrap();
+        let sysctls: Vec<_> = analysis
+            .dangerous_flags
+            .iter()
+            .filter(|f| matches!(f, DangerousFlag::Sysctl(_)))
+            .collect();
+        assert_eq!(sysctls.len(), 2);
+        assert!(matches!(
+            &sysctls[0],
+            DangerousFlag::Sysctl(v) if v == "kernel.shmmax=65536"
+        ));
+        assert!(matches!(
+            &sysctls[1],
+            DangerousFlag::Sysctl(v) if v == "net.core.somaxconn=1024"
+        ));
+    }
+
+    #[test]
+    fn test_parse_compose_sysctls_mapping() {
+        let yaml_str = r#"
+services:
+  web:
+    image: ubuntu
+    sysctls:
+      kernel.shmmax: 65536
+      net.ipv4.ip_forward: 1
+"#;
+        let dir = tempfile::tempdir().unwrap();
+        let compose_path = dir.path().join("compose.yml");
+        std::fs::write(&compose_path, yaml_str).unwrap();
+
+        let analysis = analyze_compose(&compose_path).unwrap();
+        let sysctls: Vec<_> = analysis
+            .dangerous_flags
+            .iter()
+            .filter(|f| matches!(f, DangerousFlag::Sysctl(_)))
+            .collect();
+        assert_eq!(sysctls.len(), 2);
+    }
+
+    #[test]
+    fn test_parse_compose_sysctls_string_value() {
+        let yaml_str = r#"
+services:
+  web:
+    image: ubuntu
+    sysctls:
+      net.core.somaxconn: "1024"
+"#;
+        let dir = tempfile::tempdir().unwrap();
+        let compose_path = dir.path().join("compose.yml");
+        std::fs::write(&compose_path, yaml_str).unwrap();
+
+        let analysis = analyze_compose(&compose_path).unwrap();
+        let sysctls: Vec<_> = analysis
+            .dangerous_flags
+            .iter()
+            .filter(|f| matches!(f, DangerousFlag::Sysctl(_)))
+            .collect();
+        assert_eq!(sysctls.len(), 1);
+        assert!(matches!(
+            &sysctls[0],
+            DangerousFlag::Sysctl(v) if v == "net.core.somaxconn=1024"
+        ));
     }
 }

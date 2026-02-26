@@ -73,6 +73,10 @@ pub enum DangerousFlag {
     IpcContainer(String),
     /// --mount bind-propagation=shared/rshared (マウント伝搬)
     MountPropagation(String),
+    /// --sysctl KEY=VALUE (カーネルパラメータ設定)
+    Sysctl(String),
+    /// --add-host HOST:IP (ホスト名解決エントリ)
+    AddHost(String),
 }
 
 impl std::fmt::Display for DangerousFlag {
@@ -97,6 +101,8 @@ impl std::fmt::Display for DangerousFlag {
             DangerousFlag::MountPropagation(mode) => {
                 write!(f, "bind-propagation={}", mode)
             }
+            DangerousFlag::Sysctl(val) => write!(f, "--sysctl {}", val),
+            DangerousFlag::AddHost(val) => write!(f, "--add-host {}", val),
         }
     }
 }
@@ -579,6 +585,36 @@ pub fn parse_docker_args(args: &[&str]) -> DockerCommand {
             }
         } else if let Some(value) = arg.strip_prefix("--label-file=") {
             cmd.host_paths.push(value.to_string());
+            i += 1;
+            continue;
+        }
+
+        // --sysctl (カーネルパラメータ → 危険値検出)
+        if arg == "--sysctl" {
+            if i + 1 < args.len() {
+                cmd.dangerous_flags
+                    .push(DangerousFlag::Sysctl(args[i + 1].to_string()));
+                i += 2;
+                continue;
+            }
+        } else if let Some(value) = arg.strip_prefix("--sysctl=") {
+            cmd.dangerous_flags
+                .push(DangerousFlag::Sysctl(value.to_string()));
+            i += 1;
+            continue;
+        }
+
+        // --add-host (メタデータ IP 検出)
+        if arg == "--add-host" {
+            if i + 1 < args.len() {
+                cmd.dangerous_flags
+                    .push(DangerousFlag::AddHost(args[i + 1].to_string()));
+                i += 2;
+                continue;
+            }
+        } else if let Some(value) = arg.strip_prefix("--add-host=") {
+            cmd.dangerous_flags
+                .push(DangerousFlag::AddHost(value.to_string()));
             i += 1;
             continue;
         }
@@ -1648,5 +1684,95 @@ mod tests {
         let cmd = parse_docker_args(&args);
         // apparmor は seccomp パス検出の対象外
         assert!(cmd.host_paths.is_empty());
+    }
+
+    // --- Phase 5d: --sysctl ---
+
+    #[test]
+    fn test_parse_sysctl_equals() {
+        let args = vec!["run", "--sysctl=kernel.shmmax=65536", "ubuntu"];
+        let cmd = parse_docker_args(&args);
+        assert!(matches!(
+            &cmd.dangerous_flags[0],
+            DangerousFlag::Sysctl(v) if v == "kernel.shmmax=65536"
+        ));
+    }
+
+    #[test]
+    fn test_parse_sysctl_space() {
+        let args = vec!["run", "--sysctl", "net.ipv4.ip_forward=1", "ubuntu"];
+        let cmd = parse_docker_args(&args);
+        assert!(matches!(
+            &cmd.dangerous_flags[0],
+            DangerousFlag::Sysctl(v) if v == "net.ipv4.ip_forward=1"
+        ));
+    }
+
+    #[test]
+    fn test_parse_sysctl_not_eaten_as_image() {
+        let args = vec![
+            "run",
+            "--sysctl",
+            "net.core.somaxconn=1024",
+            "--privileged",
+            "ubuntu",
+        ];
+        let cmd = parse_docker_args(&args);
+        assert_eq!(cmd.image, Some("ubuntu".to_string()));
+        assert!(cmd.dangerous_flags.contains(&DangerousFlag::Privileged));
+    }
+
+    #[test]
+    fn test_parse_multiple_sysctls() {
+        let args = vec![
+            "run",
+            "--sysctl",
+            "kernel.shmmax=65536",
+            "--sysctl=net.ipv4.ip_forward=1",
+            "ubuntu",
+        ];
+        let cmd = parse_docker_args(&args);
+        let sysctls: Vec<_> = cmd
+            .dangerous_flags
+            .iter()
+            .filter(|f| matches!(f, DangerousFlag::Sysctl(_)))
+            .collect();
+        assert_eq!(sysctls.len(), 2);
+    }
+
+    // --- Phase 5d: --add-host ---
+
+    #[test]
+    fn test_parse_add_host_equals() {
+        let args = vec!["run", "--add-host=metadata:169.254.169.254", "ubuntu"];
+        let cmd = parse_docker_args(&args);
+        assert!(matches!(
+            &cmd.dangerous_flags[0],
+            DangerousFlag::AddHost(v) if v == "metadata:169.254.169.254"
+        ));
+    }
+
+    #[test]
+    fn test_parse_add_host_space() {
+        let args = vec!["run", "--add-host", "myhost:192.168.1.1", "ubuntu"];
+        let cmd = parse_docker_args(&args);
+        assert!(matches!(
+            &cmd.dangerous_flags[0],
+            DangerousFlag::AddHost(v) if v == "myhost:192.168.1.1"
+        ));
+    }
+
+    #[test]
+    fn test_parse_add_host_not_eaten_as_image() {
+        let args = vec![
+            "run",
+            "--add-host",
+            "myhost:10.0.0.1",
+            "--privileged",
+            "ubuntu",
+        ];
+        let cmd = parse_docker_args(&args);
+        assert_eq!(cmd.image, Some("ubuntu".to_string()));
+        assert!(cmd.dangerous_flags.contains(&DangerousFlag::Privileged));
     }
 }
