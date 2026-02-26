@@ -80,6 +80,10 @@ pub fn evaluate(cmd: &DockerCommand, config: &Config, cwd: &str) -> Decision {
                 deny_reasons
                     .push("--ipc=host is not allowed (exposes host IPC namespace)".to_string());
             }
+            DangerousFlag::UtsHost => {
+                deny_reasons
+                    .push("--uts=host is not allowed (exposes host UTS namespace)".to_string());
+            }
             DangerousFlag::NetworkContainer(name) => {
                 deny_reasons.push(format!(
                     "--network=container:{} is not allowed (shares network namespace with another container)",
@@ -180,6 +184,11 @@ pub fn evaluate(cmd: &DockerCommand, config: &Config, cwd: &str) -> Decision {
             DangerousFlag::IpcHost => {
                 deny_reasons.push(
                     "Compose: 'ipc: host' is not allowed (exposes host IPC namespace)".to_string(),
+                );
+            }
+            DangerousFlag::UtsHost => {
+                deny_reasons.push(
+                    "Compose: 'uts: host' is not allowed (exposes host UTS namespace)".to_string(),
                 );
             }
             DangerousFlag::NetworkContainer(name) => {
@@ -783,6 +792,120 @@ mod tests {
             decision,
             Decision::Allow,
             "/tmp should be allowed when in allowed_paths"
+        );
+    }
+
+    #[test]
+    fn test_evaluate_uts_host() {
+        let config = Config::default();
+        let cmd = DockerCommand {
+            subcommand: DockerSubcommand::Run,
+            bind_mounts: vec![],
+            dangerous_flags: vec![DangerousFlag::UtsHost],
+            compose_file: None,
+            image: Some("ubuntu".to_string()),
+            host_paths: vec![],
+        };
+        let decision = evaluate(&cmd, &config, "/tmp");
+        assert!(
+            matches!(decision, Decision::Deny(_)),
+            "--uts=host should be denied: {:?}",
+            decision
+        );
+    }
+
+    #[test]
+    fn test_evaluate_env_file_outside_home() {
+        let config = Config::default();
+        let cmd = DockerCommand {
+            subcommand: DockerSubcommand::Run,
+            bind_mounts: vec![],
+            dangerous_flags: vec![],
+            compose_file: None,
+            image: Some("ubuntu".to_string()),
+            host_paths: vec!["/etc/secrets.env".to_string()],
+        };
+        let decision = evaluate(&cmd, &config, "/tmp");
+        assert!(
+            matches!(decision, Decision::Deny(_)),
+            "--env-file with path outside $HOME should be denied: {:?}",
+            decision
+        );
+    }
+
+    #[test]
+    fn test_evaluate_env_file_inside_home() {
+        let config = Config::default();
+        let cmd = DockerCommand {
+            subcommand: DockerSubcommand::Run,
+            bind_mounts: vec![],
+            dangerous_flags: vec![],
+            compose_file: None,
+            image: Some("ubuntu".to_string()),
+            host_paths: vec![home_path("projects/.env")],
+        };
+        let decision = evaluate(&cmd, &config, "/tmp");
+        assert_eq!(
+            decision,
+            Decision::Allow,
+            "--env-file with path inside $HOME should be allowed"
+        );
+    }
+
+    #[test]
+    fn test_evaluate_cap_add_net_admin() {
+        let config = Config::default();
+        let cmd = DockerCommand {
+            subcommand: DockerSubcommand::Run,
+            bind_mounts: vec![],
+            dangerous_flags: vec![DangerousFlag::CapAdd("NET_ADMIN".to_string())],
+            compose_file: None,
+            image: Some("ubuntu".to_string()),
+            host_paths: vec![],
+        };
+        let decision = evaluate(&cmd, &config, "/tmp");
+        assert!(
+            matches!(decision, Decision::Deny(_)),
+            "NET_ADMIN should be denied by default: {:?}",
+            decision
+        );
+    }
+
+    #[test]
+    fn test_evaluate_cap_add_dac_read_search() {
+        let config = Config::default();
+        let cmd = DockerCommand {
+            subcommand: DockerSubcommand::Run,
+            bind_mounts: vec![],
+            dangerous_flags: vec![DangerousFlag::CapAdd("DAC_READ_SEARCH".to_string())],
+            compose_file: None,
+            image: Some("ubuntu".to_string()),
+            host_paths: vec![],
+        };
+        let decision = evaluate(&cmd, &config, "/tmp");
+        assert!(
+            matches!(decision, Decision::Deny(_)),
+            "DAC_READ_SEARCH should be denied by default: {:?}",
+            decision
+        );
+    }
+
+    #[test]
+    fn test_evaluate_cap_add_bpf() {
+        let config = Config::default();
+        let cmd = DockerCommand {
+            subcommand: DockerSubcommand::Run,
+            bind_mounts: vec![],
+            dangerous_flags: vec![DangerousFlag::CapAdd("BPF".to_string())],
+            compose_file: None,
+            image: Some("ubuntu".to_string()),
+            host_paths: vec![],
+        };
+        let decision = evaluate(&cmd, &config, "/tmp");
+        assert!(
+            matches!(decision, Decision::Deny(_)),
+            "BPF should be denied by default: {:?}",
+            decision
         );
     }
 }

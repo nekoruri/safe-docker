@@ -537,3 +537,138 @@ fn test_deny_compose_pid_container() {
     assert_eq!(exit_code, 0);
     assert_deny(&stdout, "compose with pid: container:app");
 }
+
+// --- Phase 5a: --uts=host ---
+
+#[test]
+fn test_deny_uts_host() {
+    let input = make_bash_input("docker run --uts=host ubuntu");
+    let (stdout, exit_code) = run_hook(&input);
+    assert_eq!(exit_code, 0);
+    assert_deny(&stdout, "--uts=host");
+}
+
+#[test]
+fn test_deny_uts_host_space() {
+    let input = make_bash_input("docker run --uts host ubuntu");
+    let (stdout, exit_code) = run_hook(&input);
+    assert_eq!(exit_code, 0);
+    assert_deny(&stdout, "--uts=host (space syntax)");
+}
+
+#[test]
+fn test_deny_compose_uts_host() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("compose.yml"),
+        "services:\n  web:\n    image: ubuntu\n    uts: host\n",
+    )
+    .unwrap();
+
+    let input = serde_json::json!({
+        "session_id": "test-session",
+        "hook_event_name": "PreToolUse",
+        "tool_name": "Bash",
+        "tool_input": {
+            "command": "docker compose up",
+            "description": "test"
+        },
+        "cwd": dir.path().to_str().unwrap()
+    })
+    .to_string();
+
+    let (stdout, exit_code) = run_hook(&input);
+    assert_eq!(exit_code, 0);
+    assert_deny(&stdout, "compose with uts: host");
+}
+
+// --- Phase 5b: --env-file / --label-file パス検証 ---
+
+#[test]
+fn test_deny_env_file_outside_home() {
+    let input = make_bash_input("docker run --env-file /etc/shadow ubuntu");
+    let (stdout, exit_code) = run_hook(&input);
+    assert_eq!(exit_code, 0);
+    assert_deny(&stdout, "--env-file with path outside $HOME");
+}
+
+#[test]
+fn test_deny_env_file_equals_outside_home() {
+    let input = make_bash_input("docker run --env-file=/etc/secrets.env ubuntu");
+    let (stdout, exit_code) = run_hook(&input);
+    assert_eq!(exit_code, 0);
+    assert_deny(&stdout, "--env-file= with path outside $HOME");
+}
+
+#[test]
+fn test_deny_label_file_outside_home() {
+    let input = make_bash_input("docker run --label-file /etc/labels ubuntu");
+    let (stdout, exit_code) = run_hook(&input);
+    assert_eq!(exit_code, 0);
+    assert_deny(&stdout, "--label-file with path outside $HOME");
+}
+
+// --- Phase 5b: --security-opt seccomp=PATH ---
+
+#[test]
+fn test_deny_seccomp_profile_outside_home() {
+    let input =
+        make_bash_input("docker run --security-opt seccomp=/etc/docker/seccomp.json ubuntu");
+    let (stdout, exit_code) = run_hook(&input);
+    assert_eq!(exit_code, 0);
+    assert_deny(&stdout, "seccomp profile path outside $HOME");
+}
+
+// --- Phase 5c: blocked_capabilities 拡充 ---
+
+#[test]
+fn test_deny_cap_add_net_admin() {
+    let input = make_bash_input("docker run --cap-add NET_ADMIN ubuntu");
+    let (stdout, exit_code) = run_hook(&input);
+    assert_eq!(exit_code, 0);
+    assert_deny(&stdout, "--cap-add NET_ADMIN");
+}
+
+#[test]
+fn test_deny_cap_add_dac_read_search() {
+    let input = make_bash_input("docker run --cap-add DAC_READ_SEARCH ubuntu");
+    let (stdout, exit_code) = run_hook(&input);
+    assert_eq!(exit_code, 0);
+    assert_deny(&stdout, "--cap-add DAC_READ_SEARCH");
+}
+
+#[test]
+fn test_deny_cap_add_bpf() {
+    let input = make_bash_input("docker run --cap-add BPF ubuntu");
+    let (stdout, exit_code) = run_hook(&input);
+    assert_eq!(exit_code, 0);
+    assert_deny(&stdout, "--cap-add BPF");
+}
+
+#[test]
+fn test_deny_cap_add_sys_boot() {
+    let input = make_bash_input("docker run --cap-add SYS_BOOT ubuntu");
+    let (stdout, exit_code) = run_hook(&input);
+    assert_eq!(exit_code, 0);
+    assert_deny(&stdout, "--cap-add SYS_BOOT");
+}
+
+#[test]
+fn test_deny_cap_add_perfmon() {
+    let input = make_bash_input("docker run --cap-add PERFMON ubuntu");
+    let (stdout, exit_code) = run_hook(&input);
+    assert_eq!(exit_code, 0);
+    assert_deny(&stdout, "--cap-add PERFMON");
+}
+
+// --- is_flag_with_value 補完の E2E テスト ---
+
+#[test]
+fn test_env_file_does_not_eat_privileged() {
+    // --env-file の値が is_flag_with_value に含まれない場合、
+    // 次の --privileged がイメージ名として誤認されるバグを防ぐ
+    let input = make_bash_input("docker run --env-file /tmp/env --privileged ubuntu");
+    let (stdout, exit_code) = run_hook(&input);
+    assert_eq!(exit_code, 0);
+    assert_deny(&stdout, "--env-file should not eat --privileged flag");
+}

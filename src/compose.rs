@@ -162,6 +162,13 @@ fn extract_service_dangerous_settings(service: &serde_yml::Value, flags: &mut Ve
         }
     }
 
+    // uts: host
+    if let Some(uts) = service.get("uts").and_then(|v| v.as_str())
+        && uts == "host"
+    {
+        flags.push(DangerousFlag::UtsHost);
+    }
+
     // cap_add: [SYS_ADMIN, ...]
     if let Some(caps) = service.get("cap_add").and_then(|v| v.as_sequence()) {
         for cap in caps {

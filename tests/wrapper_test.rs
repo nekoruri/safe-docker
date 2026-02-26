@@ -682,3 +682,132 @@ fn test_check_config_shows_wrapper_settings() {
         stderr
     );
 }
+
+// --- Phase 5a: --uts=host ---
+
+#[test]
+fn test_wrapper_deny_uts_host() {
+    let (_, stderr, exit_code) = run_wrapper(&["run", "--uts=host", "ubuntu"]);
+    assert_eq!(exit_code, 1);
+    assert!(
+        stderr.contains("--uts=host"),
+        "--uts=host should be denied: {}",
+        stderr
+    );
+}
+
+#[test]
+fn test_wrapper_deny_uts_host_space() {
+    let (_, stderr, exit_code) = run_wrapper(&["run", "--uts", "host", "ubuntu"]);
+    assert_eq!(exit_code, 1);
+    assert!(
+        stderr.contains("--uts=host"),
+        "--uts host (space) should be denied: {}",
+        stderr
+    );
+}
+
+// --- Phase 5b: --env-file ---
+
+#[test]
+fn test_wrapper_deny_env_file_outside_home() {
+    let (_, stderr, exit_code) = run_wrapper(&["run", "--env-file", "/etc/shadow", "ubuntu"]);
+    assert_eq!(exit_code, 1);
+    assert!(
+        stderr.contains("outside $HOME") || stderr.contains("/etc/shadow"),
+        "--env-file /etc/shadow should be denied: {}",
+        stderr
+    );
+}
+
+#[test]
+fn test_wrapper_deny_env_file_equals_outside_home() {
+    let (_, stderr, exit_code) = run_wrapper(&["run", "--env-file=/etc/secrets.env", "ubuntu"]);
+    assert_eq!(exit_code, 1);
+    assert!(
+        stderr.contains("outside $HOME") || stderr.contains("/etc/secrets"),
+        "--env-file=/etc/secrets.env should be denied: {}",
+        stderr
+    );
+}
+
+#[test]
+fn test_wrapper_allow_env_file_inside_home() {
+    let (stdout, _, exit_code) = run_wrapper(&[
+        "run",
+        "--env-file",
+        &format!("{}/projects/.env", home_dir()),
+        "ubuntu",
+    ]);
+    assert_eq!(exit_code, 0);
+    assert!(
+        stdout.contains("ubuntu"),
+        "--env-file inside $HOME should be allowed"
+    );
+}
+
+// --- Phase 5b: --label-file ---
+
+#[test]
+fn test_wrapper_deny_label_file_outside_home() {
+    let (_, stderr, exit_code) = run_wrapper(&["run", "--label-file", "/etc/labels", "ubuntu"]);
+    assert_eq!(exit_code, 1);
+    assert!(
+        stderr.contains("outside $HOME") || stderr.contains("/etc/labels"),
+        "--label-file /etc/labels should be denied: {}",
+        stderr
+    );
+}
+
+// --- Phase 5b: seccomp profile path ---
+
+#[test]
+fn test_wrapper_deny_seccomp_profile_outside_home() {
+    let (_, stderr, exit_code) = run_wrapper(&[
+        "run",
+        "--security-opt",
+        "seccomp=/etc/docker/seccomp.json",
+        "ubuntu",
+    ]);
+    assert_eq!(exit_code, 1);
+    assert!(
+        stderr.contains("outside $HOME") || stderr.contains("seccomp") || stderr.contains("/etc"),
+        "seccomp profile outside $HOME should be denied: {}",
+        stderr
+    );
+}
+
+// --- Phase 5c: blocked capabilities ---
+
+#[test]
+fn test_wrapper_deny_cap_add_net_admin() {
+    let (_, stderr, exit_code) = run_wrapper(&["run", "--cap-add", "NET_ADMIN", "ubuntu"]);
+    assert_eq!(exit_code, 1);
+    assert!(
+        stderr.contains("NET_ADMIN"),
+        "--cap-add NET_ADMIN should be denied: {}",
+        stderr
+    );
+}
+
+#[test]
+fn test_wrapper_deny_cap_add_dac_read_search() {
+    let (_, stderr, exit_code) = run_wrapper(&["run", "--cap-add=DAC_READ_SEARCH", "ubuntu"]);
+    assert_eq!(exit_code, 1);
+    assert!(
+        stderr.contains("DAC_READ_SEARCH"),
+        "--cap-add=DAC_READ_SEARCH should be denied: {}",
+        stderr
+    );
+}
+
+#[test]
+fn test_wrapper_deny_cap_add_bpf() {
+    let (_, stderr, exit_code) = run_wrapper(&["run", "--cap-add", "BPF", "ubuntu"]);
+    assert_eq!(exit_code, 1);
+    assert!(
+        stderr.contains("BPF"),
+        "--cap-add BPF should be denied: {}",
+        stderr
+    );
+}
