@@ -73,11 +73,11 @@
 - [x] `PERFMON` 追加（パフォーマンスモニタリング。サイドチャネル攻撃）
 - [x] `SYS_BOOT` 追加（ホスト再起動）
 
-### Phase 5d: ネットワーク/カーネル操作の検出（中優先度）
-- [ ] `--sysctl` 危険値検出（`kernel.*` → deny、一部 `net.*` → ask）
-- [ ] `--add-host` のメタデータ IP 検出（169.254.169.254 → ask）
-- [ ] Compose `sysctls:` の対応
-- [ ] CIS 5.2 対応: `--security-opt label:disable` 検出
+### Phase 5d: ネットワーク/カーネル操作の検出 ✅
+- [x] `--sysctl` 危険値検出（`kernel.*` → deny、`net.*` → ask、その他 → allow）
+- [x] `--add-host` のメタデータ IP 検出（169.254.169.254、fd00:ec2::254 → ask）
+- [x] Compose `sysctls:` の対応（リスト形式・マッピング形式の両方）
+- [x] CIS 5.2 対応: `--security-opt label=disable` / `label:disable` 検出
 
 ### Phase 5e: ビルド時の安全性（中優先度）
 - [ ] `docker build --build-arg` の機密情報パターン検出（`SECRET`, `PASSWORD`, `TOKEN`, `KEY` → ask）

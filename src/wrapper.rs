@@ -352,6 +352,24 @@ fn generate_tips(reason: &str) -> Vec<String> {
                 .to_string(),
         );
     }
+    if reason.contains("--sysctl") || reason.contains("sysctl") {
+        tips.push(
+            "kernel.* sysctls are blocked because they affect the host kernel directly. Use container-safe net.* sysctls only"
+                .to_string(),
+        );
+    }
+    if reason.contains("metadata endpoint") || reason.contains("169.254.169.254") {
+        tips.push(
+            "The cloud metadata endpoint (169.254.169.254) is commonly targeted in SSRF attacks to steal credentials"
+                .to_string(),
+        );
+    }
+    if reason.contains("label=disable") || reason.contains("label:disable") {
+        tips.push(
+            "Disabling SELinux labels (CIS 5.2) removes mandatory access control protection"
+                .to_string(),
+        );
+    }
 
     // Compose 関連
     if reason.contains("Compose:") {

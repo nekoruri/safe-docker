@@ -811,3 +811,111 @@ fn test_wrapper_deny_cap_add_bpf() {
         stderr
     );
 }
+
+// --- Phase 5d: --sysctl ---
+
+#[test]
+fn test_wrapper_deny_sysctl_kernel() {
+    let (_, stderr, exit_code) = run_wrapper(&["run", "--sysctl", "kernel.shmmax=65536", "ubuntu"]);
+    assert_eq!(exit_code, 1);
+    assert!(
+        stderr.contains("kernel.shmmax"),
+        "--sysctl kernel.* should be denied: {}",
+        stderr
+    );
+}
+
+#[test]
+fn test_wrapper_deny_sysctl_kernel_equals() {
+    let (_, stderr, exit_code) =
+        run_wrapper(&["run", "--sysctl=kernel.core_pattern=/tmp/exploit", "ubuntu"]);
+    assert_eq!(exit_code, 1);
+    assert!(
+        stderr.contains("kernel.core_pattern"),
+        "--sysctl=kernel.* should be denied: {}",
+        stderr
+    );
+}
+
+#[test]
+fn test_wrapper_ask_sysctl_net() {
+    // net.* is ask, non-interactive defaults to deny
+    let (_, stderr, exit_code) =
+        run_wrapper(&["run", "--sysctl", "net.ipv4.ip_forward=1", "ubuntu"]);
+    assert_eq!(exit_code, 1);
+    assert!(
+        stderr.contains("net.ipv4.ip_forward"),
+        "--sysctl net.* should ask (deny in non-interactive): {}",
+        stderr
+    );
+}
+
+#[test]
+fn test_wrapper_allow_sysctl_safe() {
+    // Non-kernel, non-net sysctls should be allowed
+    let (stdout, _, exit_code) =
+        run_wrapper(&["run", "--sysctl", "fs.mqueue.msg_max=100", "ubuntu"]);
+    assert_eq!(exit_code, 0);
+    assert!(stdout.contains("ubuntu"), "Safe sysctl should be allowed");
+}
+
+// --- Phase 5d: --add-host ---
+
+#[test]
+fn test_wrapper_ask_add_host_metadata() {
+    // metadata IP is ask, non-interactive defaults to deny
+    let (_, stderr, exit_code) =
+        run_wrapper(&["run", "--add-host", "metadata:169.254.169.254", "ubuntu"]);
+    assert_eq!(exit_code, 1);
+    assert!(
+        stderr.contains("169.254.169.254") || stderr.contains("metadata endpoint"),
+        "--add-host with metadata IP should ask (deny in non-interactive): {}",
+        stderr
+    );
+}
+
+#[test]
+fn test_wrapper_allow_add_host_normal() {
+    let (stdout, _, exit_code) =
+        run_wrapper(&["run", "--add-host", "myhost:192.168.1.1", "ubuntu"]);
+    assert_eq!(exit_code, 0);
+    assert!(
+        stdout.contains("ubuntu"),
+        "--add-host with normal IP should be allowed"
+    );
+}
+
+#[test]
+fn test_wrapper_ask_add_host_metadata_equals() {
+    let (_, stderr, exit_code) = run_wrapper(&["run", "--add-host=evil:169.254.169.254", "ubuntu"]);
+    assert_eq!(exit_code, 1);
+    assert!(
+        stderr.contains("169.254.169.254") || stderr.contains("metadata endpoint"),
+        "--add-host= with metadata IP should ask (deny in non-interactive): {}",
+        stderr
+    );
+}
+
+// --- Phase 5d: CIS 5.2 label:disable ---
+
+#[test]
+fn test_wrapper_deny_label_disable() {
+    let (_, stderr, exit_code) = run_wrapper(&["run", "--security-opt", "label=disable", "ubuntu"]);
+    assert_eq!(exit_code, 1);
+    assert!(
+        stderr.contains("label=disable") || stderr.contains("security profile"),
+        "--security-opt label=disable should be denied (CIS 5.2): {}",
+        stderr
+    );
+}
+
+#[test]
+fn test_wrapper_deny_label_disable_colon() {
+    let (_, stderr, exit_code) = run_wrapper(&["run", "--security-opt", "label:disable", "ubuntu"]);
+    assert_eq!(exit_code, 1);
+    assert!(
+        stderr.contains("label:disable") || stderr.contains("security profile"),
+        "--security-opt label:disable should be denied (CIS 5.2): {}",
+        stderr
+    );
+}

@@ -672,3 +672,146 @@ fn test_env_file_does_not_eat_privileged() {
     assert_eq!(exit_code, 0);
     assert_deny(&stdout, "--env-file should not eat --privileged flag");
 }
+
+// --- Phase 5d: --sysctl 危険値検出 ---
+
+#[test]
+fn test_deny_sysctl_kernel() {
+    let input = make_bash_input("docker run --sysctl kernel.core_pattern=/tmp/exploit ubuntu");
+    let (stdout, exit_code) = run_hook(&input);
+    assert_eq!(exit_code, 0);
+    assert_deny(&stdout, "--sysctl kernel.* should be denied");
+}
+
+#[test]
+fn test_deny_sysctl_kernel_equals() {
+    let input = make_bash_input("docker run --sysctl=kernel.shmmax=65536 ubuntu");
+    let (stdout, exit_code) = run_hook(&input);
+    assert_eq!(exit_code, 0);
+    assert_deny(&stdout, "--sysctl=kernel.* should be denied");
+}
+
+#[test]
+fn test_ask_sysctl_net() {
+    let input = make_bash_input("docker run --sysctl net.ipv4.ip_forward=1 ubuntu");
+    let (stdout, exit_code) = run_hook(&input);
+    assert_eq!(exit_code, 0);
+    assert_ask(&stdout, "--sysctl net.* should ask");
+}
+
+#[test]
+fn test_deny_compose_sysctl_kernel() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("compose.yml"),
+        "services:\n  web:\n    image: ubuntu\n    sysctls:\n      - kernel.shmmax=65536\n",
+    )
+    .unwrap();
+
+    let input = serde_json::json!({
+        "session_id": "test-session",
+        "hook_event_name": "PreToolUse",
+        "tool_name": "Bash",
+        "tool_input": {
+            "command": "docker compose up",
+            "description": "test"
+        },
+        "cwd": dir.path().to_str().unwrap()
+    })
+    .to_string();
+
+    let (stdout, exit_code) = run_hook(&input);
+    assert_eq!(exit_code, 0);
+    assert_deny(&stdout, "compose with kernel.* sysctl should be denied");
+}
+
+#[test]
+fn test_ask_compose_sysctl_net() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("compose.yml"),
+        "services:\n  web:\n    image: ubuntu\n    sysctls:\n      net.ipv4.ip_forward: 1\n",
+    )
+    .unwrap();
+
+    let input = serde_json::json!({
+        "session_id": "test-session",
+        "hook_event_name": "PreToolUse",
+        "tool_name": "Bash",
+        "tool_input": {
+            "command": "docker compose up",
+            "description": "test"
+        },
+        "cwd": dir.path().to_str().unwrap()
+    })
+    .to_string();
+
+    let (stdout, exit_code) = run_hook(&input);
+    assert_eq!(exit_code, 0);
+    assert_ask(&stdout, "compose with net.* sysctl should ask");
+}
+
+// --- Phase 5d: --add-host メタデータ IP 検出 ---
+
+#[test]
+fn test_ask_add_host_metadata_ip() {
+    let input = make_bash_input("docker run --add-host=metadata:169.254.169.254 ubuntu");
+    let (stdout, exit_code) = run_hook(&input);
+    assert_eq!(exit_code, 0);
+    assert_ask(&stdout, "--add-host with metadata IP should ask");
+}
+
+#[test]
+fn test_ask_add_host_metadata_ip_space() {
+    let input = make_bash_input("docker run --add-host metadata:169.254.169.254 ubuntu");
+    let (stdout, exit_code) = run_hook(&input);
+    assert_eq!(exit_code, 0);
+    assert_ask(&stdout, "--add-host with metadata IP (space) should ask");
+}
+
+#[test]
+fn test_allow_add_host_normal_ip() {
+    let input = make_bash_input("docker run --add-host myhost:192.168.1.1 ubuntu");
+    let (stdout, exit_code) = run_hook(&input);
+    assert_eq!(exit_code, 0);
+    assert!(
+        stdout.trim().is_empty(),
+        "add-host with normal IP should be allowed"
+    );
+}
+
+// --- Phase 5d: CIS 5.2 --security-opt label:disable ---
+
+#[test]
+fn test_deny_security_opt_label_disable() {
+    let input = make_bash_input("docker run --security-opt label=disable ubuntu");
+    let (stdout, exit_code) = run_hook(&input);
+    assert_eq!(exit_code, 0);
+    assert_deny(&stdout, "--security-opt label=disable (CIS 5.2)");
+}
+
+#[test]
+fn test_deny_security_opt_label_disable_colon() {
+    let input = make_bash_input("docker run --security-opt label:disable ubuntu");
+    let (stdout, exit_code) = run_hook(&input);
+    assert_eq!(exit_code, 0);
+    assert_deny(&stdout, "--security-opt label:disable (CIS 5.2)");
+}
+
+#[test]
+fn test_deny_security_opt_label_disable_equals_syntax() {
+    let input = make_bash_input("docker run --security-opt=label=disable ubuntu");
+    let (stdout, exit_code) = run_hook(&input);
+    assert_eq!(exit_code, 0);
+    assert_deny(&stdout, "--security-opt=label=disable (CIS 5.2)");
+}
+
+// --- Phase 5d: --sysctl does not eat subsequent flags ---
+
+#[test]
+fn test_sysctl_does_not_eat_privileged() {
+    let input = make_bash_input("docker run --sysctl net.core.somaxconn=1024 --privileged ubuntu");
+    let (stdout, exit_code) = run_hook(&input);
+    assert_eq!(exit_code, 0);
+    assert_deny(&stdout, "--sysctl should not eat --privileged flag");
+}
