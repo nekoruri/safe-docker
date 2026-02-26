@@ -10,6 +10,8 @@ safe-docker と OPA Docker AuthZ プラグインを組み合わせた多層防�
 - [OPA ポリシー例](#opa-ポリシー例)
 - [セットアップ手順](#セットアップ手順)
 - [トラブルシューティング](#トラブルシューティング)
+- [safe-docker と OPA のポリシー差異](#safe-docker-と-opa-のポリシー差異)
+- [ポリシーの一貫性検証](#ポリシーの一貫性検証)
 
 ---
 
@@ -378,6 +380,126 @@ safe-docker が allow したが OPA が deny した場合:
 safe-docker が deny したが OPA が allow した場合:
 - OPA のポリシーに対応するルールが不足している
 - safe-docker の `config.toml` の変更に合わせて `authz.rego` も更新する
+
+---
+
+## safe-docker と OPA のポリシー差異
+
+safe-docker と OPA Docker AuthZ は動作レイヤーが異なるため、それぞれが得意とする検査と、原理的に実現できない検査がある。
+
+### safe-docker にしかできないこと
+
+| 機能 | 理由 |
+|------|------|
+| **Compose ファイルの事前解析** | `docker compose up` の実行前に YAML を読み、`privileged: true` や危険な `volumes`、`env_file`、`include` を検出する。OPA が見るのは Compose が展開した後の個別コンテナ作成 API であり、Compose ファイル単位の検査はできない |
+| **ask（対話的確認）** | sensitive_paths へのアクセスやイメージホワイトリスト外の使用など、完全にブロックはしないが確認を求める中間判定。OPA は allow/deny の二値のみ |
+| **教育的フィードバック（Tip メッセージ）** | 「なぜ危険か」「どう設定すれば許可できるか」をユーザーやエージェントに伝える。OPA は API エラーメッセージを返せるが、情報量は限定的 |
+| **シェルコマンド構文の解析**（Hook モード） | パイプ、チェイン、`eval`、`bash -c` などの間接実行を検出・展開し、その中の docker コマンドを検査する。OPA は Docker API のみを見る |
+| **`--build-arg` の機密パターン検出** | `SECRET`、`PASSWORD` などの名前パターンから機密情報のリスクを推定する。OPA でも `input.Body` を検査すれば技術的には可能だが、パターンマッチの記述が煩雑になる |
+| **`--env-file` / `--label-file` のパス検証** | docker がファイルを読む前に、ファイルパスが `$HOME` 外でないかを検証する。OPA が見る時点ではファイルは既に読まれ、内容が環境変数として展開済み |
+| **Compose `env_file` / `include` のパス検証** | Compose が外部ファイルを参照する前にパスを検証する。OPA からは見えない |
+
+### OPA にしかできないこと
+
+| 機能 | 理由 |
+|------|------|
+| **全 API 経路の強制** | curl、SDK、スクリプト内の docker コマンドなど、CLI 以外の経路も含め全てを検査 |
+| **バインドマウントのシンボリックリンク自動解決** | `opa-docker-authz` プラグインは `input.BindMounts[_].Resolved` にシンボリックリンク解決済みパスを提供。safe-docker も `canonicalize()` で解決するが、OPA 側はデーモンレベルで確実 |
+| **ユーザー/グループベースのポリシー** | API リクエストの送信者情報に基づく判定が可能 |
+| **レスポンスフィルタリング** | `AuthZRes` フェーズで API レスポンスを検査・フィルタできる（例: `docker inspect` の出力制限） |
+| **リモートバンドルによるポリシー配信** | 中央管理サーバーからポリシーを配信し、複数ホストを一元管理 |
+
+### 両方で実現可能なこと（ただし検査方法が異なる）
+
+| ポリシー | safe-docker の検査対象 | OPA の検査対象 |
+|----------|----------------------|---------------|
+| `--privileged` ブロック | CLI 引数 `--privileged` | `HostConfig.Privileged == true` |
+| バインドマウントのパス制限 | `-v /path:/dest` の `/path` 部分 | `BindMounts[_].Resolved` |
+| capability ブロック | `--cap-add CAP_NAME` | `HostConfig.CapAdd[_]` |
+| 名前空間フラグ | `--pid=host` 等の CLI 引数 | `HostConfig.PidMode` 等の API フィールド |
+| デバイスアクセス | `--device /dev/xxx` | `HostConfig.Devices[_]` |
+| security-opt | `--security-opt key=value` | `HostConfig.SecurityOpt[_]` |
+| Docker ソケットマウント | `-v /var/run/docker.sock:...` | `BindMounts[_].Resolved` |
+| `--sysctl` | CLI 引数 `--sysctl key=value` | `HostConfig.Sysctls` |
+
+### まとめ
+
+safe-docker のポリシーの**大部分**は OPA でも定義可能だが、以下の点で完全な等価にはならない:
+
+1. **ask レベルの判定**は OPA では再現できない（allow/deny の二値のみ）
+2. **Compose ファイルの事前解析**と**ホストファイルパスの事前検証**は OPA の検査範囲外
+3. **シェル構文の解析**（Hook モード固有）は OPA の対象外
+
+逆に、safe-docker だけでは **API 直接呼び出しやスクリプト経由のバイパス**を防げない。このため、両方を併用する多層防御が推奨される。
+
+---
+
+## ポリシーの一貫性検証
+
+パターン C（safe-docker + OPA 併用）では、2つのレイヤーのポリシーが一貫していることが重要になる。safe-docker が deny するものを OPA が allow してしまうと、バイパス経路が生まれる。
+
+### 手動検証: チェックリスト方式
+
+`config.toml` と `authz.rego` を対照しながら、以下を確認する:
+
+```
+□ blocked_flags の各フラグに対応する deny ルールが authz.rego にある
+□ blocked_capabilities の各 capability が authz.rego の CapAdd チェックに含まれている
+□ allowed_paths 以外のパスが authz.rego のバインドマウントチェックで拒否される
+□ Docker ソケットマウントが authz.rego で拒否される
+□ --pid=host, --network=host 等の名前空間フラグが authz.rego で拒否される
+```
+
+### 自動検証: --dry-run と opa eval の突き合わせ
+
+テスト対象の docker コマンドリストを用意し、safe-docker と OPA の両方で判定を比較する:
+
+```bash
+#!/bin/bash
+# consistency_check.sh - ポリシー一貫性の自動検証スクリプト例
+
+COMMANDS=(
+    "run --privileged ubuntu"
+    "run -v /etc:/data ubuntu"
+    "run --cap-add SYS_ADMIN ubuntu"
+    "run --pid=host ubuntu"
+    "run --network=host ubuntu"
+    "run -v /var/run/docker.sock:/var/run/docker.sock ubuntu"
+    "run -v \$HOME/projects:/app ubuntu"
+    "run ubuntu echo hello"
+)
+
+echo "=== Policy Consistency Check ==="
+for cmd in "${COMMANDS[@]}"; do
+    # safe-docker の判定
+    sd_result=$(safe-docker --dry-run $cmd 2>&1)
+    sd_decision=$(echo "$sd_result" | grep -oP 'Decision: \K\w+')
+
+    # OPA の判定 (Docker API 相当の入力を opa eval で評価)
+    # 注意: Docker CLI 引数から API JSON への変換は手動で用意が必要
+    # opa_result=$(opa eval -d authz.rego -i "input_${cmd_id}.json" "data.docker.authz.allow")
+
+    echo "[$sd_decision] docker $cmd"
+done
+```
+
+> **注意**: CLI 引数から Docker API の JSON 入力への変換は自明ではない。テスト用の入力 JSON を手動で用意するか、実際に docker コマンドを実行して OPA の決定ログを確認する方式が現実的。
+
+### 実環境での継続的検証
+
+本番環境では、safe-docker と OPA の監査ログを突き合わせることで一貫性を継続的に確認できる:
+
+1. **safe-docker の監査ログ**（JSONL）と **OPA の決定ログ** を同一のログ基盤に集約
+2. safe-docker が deny したコマンドが、OPA 側でも deny されていることを確認
+3. OPA が deny したが safe-docker のログにない操作は、CLI 外のバイパス経路による操作（期待通りの動作）
+
+```
+# 不整合の検出パターン
+safe-docker: deny  +  OPA: allow  → ⚠ OPA のポリシーに漏れ（要修正）
+safe-docker: allow +  OPA: deny  → ℹ OPA がより厳しい（正常な多層防御）
+safe-docker: deny  +  OPA: deny  → ✓ 一貫している
+safe-docker: (ログなし) + OPA: deny → ℹ CLI 外の経路が OPA でブロックされた
+```
 
 ---
 
