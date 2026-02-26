@@ -11,6 +11,7 @@
 | v0.3.0 | 2026-02 | Wrapper モード追加（docker 置換、対話的確認、--dry-run、--verbose、監査ログ mode フィールド） |
 | v0.4.0 | 2026-02 | セキュリティ強化（コンテナ間 namespace 共有検出、mount propagation 検出、sensitive_paths 拡充）、Artifact Attestations 導入 |
 | v0.5.0 | 2026-02 | セキュリティ大幅強化: パーサー正確性改善、ホストファイル読み取り防止、capability 拡充、sysctl/add-host 検出、ビルド時安全性、Compose env_file/include/sysctls 対応 |
+| v0.6.0 | 2026-02 | 実運用品質向上: 診断機能強化、監査ログ config_source、macOS 対応修正、多環境 CI（macOS/musl）、MSRV 設定、CONTRIBUTING.md |
 
 ## 完了済みタスク
 
