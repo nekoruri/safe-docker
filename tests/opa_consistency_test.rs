@@ -302,7 +302,8 @@ fn test_rego_capabilities_match_config_defaults() {
         .collect();
 
     assert_eq!(
-        rego_caps, expected,
+        rego_caps,
+        expected,
         "opa/authz.rego capabilities must match safe-docker defaults exactly.\n\
          In rego but not in defaults: {:?}\n\
          In defaults but not in rego: {:?}\n\
