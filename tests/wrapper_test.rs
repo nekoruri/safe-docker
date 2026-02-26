@@ -1032,8 +1032,7 @@ fn test_wrapper_verbose_shows_config_and_docker() {
 #[test]
 fn test_wrapper_verbose_deny_shows_config() {
     // deny 時にも設定情報が表示される
-    let (_stdout, stderr, exit_code) =
-        run_wrapper(&["--verbose", "run", "--privileged", "ubuntu"]);
+    let (_stdout, stderr, exit_code) = run_wrapper(&["--verbose", "run", "--privileged", "ubuntu"]);
     assert_eq!(exit_code, 1);
     assert!(
         stderr.contains("[safe-docker] Config:"),
