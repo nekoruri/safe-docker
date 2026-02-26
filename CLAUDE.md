@@ -17,6 +17,14 @@ safe-docker は、コーディングエージェントや開発者に **安全�
 - **ベンチマーク**: criterion (`cargo bench`)
 - **静的解析**: clippy (`cargo clippy -- -D warnings`)
 
+## 開発環境の初期設定
+
+作業開始時に以下を実行して pre-commit hook を有効化すること:
+
+```bash
+git config core.hooksPath scripts
+```
+
 ## コマンド
 
 ```bash
