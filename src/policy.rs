@@ -133,6 +133,17 @@ pub fn evaluate(cmd: &DockerCommand, config: &Config, cwd: &str) -> Decision {
                     ));
                 }
             }
+            DangerousFlag::BuildArgSecret(val) => {
+                let display = if val.contains('=') {
+                    val.split('=').next().unwrap_or(val)
+                } else {
+                    val
+                };
+                ask_reasons.push(format!(
+                    "--build-arg '{}' appears to contain a secret; build args are visible in image layers via 'docker history'. Consider using --secret instead",
+                    display
+                ));
+            }
         }
     }
 
@@ -149,6 +160,22 @@ pub fn evaluate(cmd: &DockerCommand, config: &Config, cwd: &str) -> Decision {
             Ok(analysis) => {
                 all_mounts.extend(analysis.bind_mounts);
                 all_flags.extend(analysis.dangerous_flags);
+                // include ディレクティブ等のホストパスを検証
+                for path in &analysis.host_paths {
+                    match path_validator::validate_path(path, config) {
+                        PathVerdict::Allowed => {}
+                        PathVerdict::Sensitive(reason) => {
+                            ask_reasons.push(reason);
+                        }
+                        PathVerdict::Denied(reason) => {
+                            ask_reasons
+                                .push(format!("Compose include references {}: {}", path, reason));
+                        }
+                        PathVerdict::Unresolvable(reason) => {
+                            ask_reasons.push(reason);
+                        }
+                    }
+                }
             }
             Err(reason) => {
                 // compose ファイルのパースエラーは deny (fail-safe)
@@ -1110,6 +1137,48 @@ mod tests {
         assert!(
             matches!(decision, Decision::Deny(_)),
             "label:disable should be denied (CIS 5.2): {:?}",
+            decision
+        );
+    }
+
+    // --- Phase 5e: --build-arg secret detection ---
+
+    #[test]
+    fn test_evaluate_build_arg_secret_ask() {
+        let config = Config::default();
+        let cmd = DockerCommand {
+            subcommand: DockerSubcommand::Build,
+            bind_mounts: vec![],
+            dangerous_flags: vec![DangerousFlag::BuildArgSecret(
+                "DB_PASSWORD=hunter2".to_string(),
+            )],
+            compose_file: None,
+            image: None,
+            host_paths: vec![home_path("project")],
+        };
+        let decision = evaluate(&cmd, &config, "/tmp");
+        assert!(
+            matches!(decision, Decision::Ask(_)),
+            "build-arg with secret should ask: {:?}",
+            decision
+        );
+    }
+
+    #[test]
+    fn test_evaluate_build_secret_path_outside_home() {
+        let config = Config::default();
+        let cmd = DockerCommand {
+            subcommand: DockerSubcommand::Build,
+            bind_mounts: vec![],
+            dangerous_flags: vec![],
+            compose_file: None,
+            image: None,
+            host_paths: vec![home_path("project"), "/etc/secrets/db.env".to_string()],
+        };
+        let decision = evaluate(&cmd, &config, "/tmp");
+        assert!(
+            matches!(decision, Decision::Deny(_)),
+            "--secret src outside $HOME should be denied: {:?}",
             decision
         );
     }

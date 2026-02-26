@@ -370,6 +370,18 @@ fn generate_tips(reason: &str) -> Vec<String> {
                 .to_string(),
         );
     }
+    if reason.contains("--build-arg") && reason.contains("secret") {
+        tips.push(
+            "Build args are stored in image layers and visible via 'docker history'. Use BuildKit --secret for sensitive values"
+                .to_string(),
+        );
+    }
+    if reason.contains("Compose include") {
+        tips.push(
+            "Compose include references external files that may contain dangerous settings. Verify the included file is safe"
+                .to_string(),
+        );
+    }
 
     // Compose 関連
     if reason.contains("Compose:") {

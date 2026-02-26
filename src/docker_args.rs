@@ -77,6 +77,8 @@ pub enum DangerousFlag {
     Sysctl(String),
     /// --add-host HOST:IP (ホスト名解決エントリ)
     AddHost(String),
+    /// --build-arg KEY=VALUE where KEY looks like a secret
+    BuildArgSecret(String),
 }
 
 impl std::fmt::Display for DangerousFlag {
@@ -103,6 +105,7 @@ impl std::fmt::Display for DangerousFlag {
             }
             DangerousFlag::Sysctl(val) => write!(f, "--sysctl {}", val),
             DangerousFlag::AddHost(val) => write!(f, "--add-host {}", val),
+            DangerousFlag::BuildArgSecret(val) => write!(f, "--build-arg {}", val),
         }
     }
 }
@@ -224,6 +227,35 @@ fn extract_seccomp_path(opt: &str, host_paths: &mut Vec<String>) {
     {
         host_paths.push(path.to_string());
     }
+}
+
+/// --build-arg の KEY 名が機密情報を含むパターンかどうか判定
+fn is_secret_build_arg(arg: &str) -> bool {
+    // KEY=VALUE の KEY 部分を取り出す (VALUE がない場合は arg 全体が KEY)
+    let key = arg.split('=').next().unwrap_or(arg);
+    let key_upper = key.to_uppercase();
+    key_upper.contains("SECRET")
+        || key_upper.contains("PASSWORD")
+        || key_upper.contains("PASSWD")
+        || key_upper.contains("TOKEN")
+        || key_upper.contains("PRIVATE_KEY")
+        || key_upper.contains("API_KEY")
+        || key_upper.contains("APIKEY")
+        || key_upper.contains("CREDENTIAL")
+}
+
+/// --secret / --ssh のカンマ区切りオプションからソースパスを抽出
+fn extract_build_secret_path(opt: &str) -> Option<String> {
+    for part in opt.split(',') {
+        if let Some(path) = part
+            .strip_prefix("src=")
+            .or_else(|| part.strip_prefix("source="))
+            && !path.is_empty()
+        {
+            return Some(path.to_string());
+        }
+    }
+    None
 }
 
 /// docker 引数をパースして DockerCommand を返す
@@ -682,21 +714,71 @@ fn parse_build_args(args: &[&str], start: usize, cmd: &mut DockerCommand) {
             break;
         }
 
+        // --build-arg: 機密情報パターン検出
+        if arg == "--build-arg" {
+            if i + 1 < args.len() {
+                if is_secret_build_arg(args[i + 1]) {
+                    cmd.dangerous_flags
+                        .push(DangerousFlag::BuildArgSecret(args[i + 1].to_string()));
+                }
+                i += 2;
+                continue;
+            }
+        } else if let Some(value) = arg.strip_prefix("--build-arg=") {
+            if is_secret_build_arg(value) {
+                cmd.dangerous_flags
+                    .push(DangerousFlag::BuildArgSecret(value.to_string()));
+            }
+            i += 1;
+            continue;
+        }
+
+        // --secret: BuildKit secret のソースパス検証
+        if arg == "--secret" {
+            if i + 1 < args.len() {
+                if let Some(path) = extract_build_secret_path(args[i + 1]) {
+                    cmd.host_paths.push(path);
+                }
+                i += 2;
+                continue;
+            }
+        } else if let Some(value) = arg.strip_prefix("--secret=") {
+            if let Some(path) = extract_build_secret_path(value) {
+                cmd.host_paths.push(path);
+            }
+            i += 1;
+            continue;
+        }
+
+        // --ssh: BuildKit SSH 転送のソースパス検証
+        if arg == "--ssh" {
+            if i + 1 < args.len() {
+                if let Some(path) = extract_build_secret_path(args[i + 1]) {
+                    cmd.host_paths.push(path);
+                }
+                i += 2;
+                continue;
+            }
+        } else if let Some(value) = arg.strip_prefix("--ssh=") {
+            if let Some(path) = extract_build_secret_path(value) {
+                cmd.host_paths.push(path);
+            }
+            i += 1;
+            continue;
+        }
+
         // 値を取るフラグをスキップ
         if matches!(
             arg,
             "-f" | "--file"
                 | "-t"
                 | "--tag"
-                | "--build-arg"
                 | "--target"
                 | "--platform"
                 | "--label"
                 | "--cache-from"
                 | "--network"
                 | "--progress"
-                | "--secret"
-                | "--ssh"
                 | "--output"
                 | "-o"
                 | "--iidfile"
@@ -710,7 +792,6 @@ fn parse_build_args(args: &[&str], start: usize, cmd: &mut DockerCommand) {
             || arg.starts_with("-f=")
             || arg.starts_with("--tag=")
             || arg.starts_with("-t=")
-            || arg.starts_with("--build-arg=")
             || arg.starts_with("--target=")
         {
             i += 1;
@@ -1774,5 +1855,123 @@ mod tests {
         let cmd = parse_docker_args(&args);
         assert_eq!(cmd.image, Some("ubuntu".to_string()));
         assert!(cmd.dangerous_flags.contains(&DangerousFlag::Privileged));
+    }
+
+    // --- Phase 5e: --build-arg secret detection ---
+
+    #[test]
+    fn test_is_secret_build_arg_patterns() {
+        assert!(is_secret_build_arg("DB_PASSWORD=hunter2"));
+        assert!(is_secret_build_arg("API_TOKEN=abc123"));
+        assert!(is_secret_build_arg("MY_SECRET=value"));
+        assert!(is_secret_build_arg("AWS_SECRET_KEY=xxx"));
+        assert!(is_secret_build_arg("GITHUB_APIKEY=xxx"));
+        assert!(is_secret_build_arg("API_KEY=xxx"));
+        assert!(is_secret_build_arg("PRIVATE_KEY=xxx"));
+        assert!(is_secret_build_arg("DB_CREDENTIAL=xxx"));
+        assert!(is_secret_build_arg("PASSWD_HASH=xxx"));
+        // Not secret patterns
+        assert!(!is_secret_build_arg("APP_VERSION=1.0"));
+        assert!(!is_secret_build_arg("BUILD_NUMBER=42"));
+        assert!(!is_secret_build_arg("NODE_ENV=production"));
+    }
+
+    #[test]
+    fn test_parse_build_arg_secret_space() {
+        let args = vec!["build", "--build-arg", "DB_PASSWORD=secret123", "."];
+        let cmd = parse_docker_args(&args);
+        assert!(matches!(
+            &cmd.dangerous_flags[0],
+            DangerousFlag::BuildArgSecret(v) if v == "DB_PASSWORD=secret123"
+        ));
+    }
+
+    #[test]
+    fn test_parse_build_arg_secret_equals() {
+        let args = vec!["build", "--build-arg=API_TOKEN=abc", "."];
+        let cmd = parse_docker_args(&args);
+        assert!(matches!(
+            &cmd.dangerous_flags[0],
+            DangerousFlag::BuildArgSecret(v) if v == "API_TOKEN=abc"
+        ));
+    }
+
+    #[test]
+    fn test_parse_build_arg_safe_no_flag() {
+        let args = vec!["build", "--build-arg", "APP_VERSION=1.0", "."];
+        let cmd = parse_docker_args(&args);
+        assert!(
+            cmd.dangerous_flags.is_empty(),
+            "Non-secret build-arg should not produce flag"
+        );
+    }
+
+    #[test]
+    fn test_parse_build_arg_key_only() {
+        // --build-arg TOKEN (no =VALUE, sets from env)
+        let args = vec!["build", "--build-arg", "TOKEN", "."];
+        let cmd = parse_docker_args(&args);
+        assert!(matches!(
+            &cmd.dangerous_flags[0],
+            DangerousFlag::BuildArgSecret(v) if v == "TOKEN"
+        ));
+    }
+
+    // --- Phase 5e: --secret / --ssh path extraction ---
+
+    #[test]
+    fn test_extract_build_secret_path_src() {
+        assert_eq!(
+            extract_build_secret_path("id=mysecret,src=/etc/secret.txt"),
+            Some("/etc/secret.txt".to_string())
+        );
+    }
+
+    #[test]
+    fn test_extract_build_secret_path_source() {
+        assert_eq!(
+            extract_build_secret_path("id=mysecret,source=/home/user/.env"),
+            Some("/home/user/.env".to_string())
+        );
+    }
+
+    #[test]
+    fn test_extract_build_secret_path_no_src() {
+        assert_eq!(extract_build_secret_path("id=mysecret"), None);
+    }
+
+    #[test]
+    fn test_extract_build_secret_path_default_ssh() {
+        assert_eq!(extract_build_secret_path("default"), None);
+    }
+
+    #[test]
+    fn test_parse_build_secret_path_in_host_paths() {
+        let args = vec!["build", "--secret", "id=db,src=/etc/db.env", "."];
+        let cmd = parse_docker_args(&args);
+        assert!(cmd.host_paths.contains(&"/etc/db.env".to_string()));
+    }
+
+    #[test]
+    fn test_parse_build_secret_equals_path_in_host_paths() {
+        let args = vec!["build", "--secret=id=key,src=/etc/key.pem", "."];
+        let cmd = parse_docker_args(&args);
+        assert!(cmd.host_paths.contains(&"/etc/key.pem".to_string()));
+    }
+
+    #[test]
+    fn test_parse_build_ssh_path_in_host_paths() {
+        let args = vec!["build", "--ssh", "id=mykey,src=/etc/ssh/id_rsa", "."];
+        let cmd = parse_docker_args(&args);
+        assert!(cmd.host_paths.contains(&"/etc/ssh/id_rsa".to_string()));
+    }
+
+    #[test]
+    fn test_parse_build_ssh_default_no_path() {
+        let args = vec!["build", "--ssh", "default", "."];
+        let cmd = parse_docker_args(&args);
+        // "default" has no src, so no host path
+        let non_context_paths: Vec<_> = cmd.host_paths.iter().filter(|p| *p != ".").collect();
+        assert!(non_context_paths.is_empty());
     }
 }

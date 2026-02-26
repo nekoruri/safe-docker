@@ -9,6 +9,8 @@ use crate::error::{Result, SafeDockerError};
 pub struct ComposeAnalysis {
     pub bind_mounts: Vec<BindMount>,
     pub dangerous_flags: Vec<DangerousFlag>,
+    /// include ディレクティブ等で参照されるホストパス
+    pub host_paths: Vec<String>,
 }
 
 /// docker-compose.yml からバインドマウントを抽出する
@@ -51,6 +53,9 @@ pub fn analyze_compose(compose_path: &Path) -> Result<ComposeAnalysis> {
             extract_service_dangerous_settings(service, &mut analysis.dangerous_flags);
         }
     }
+
+    // include ディレクティブ解析
+    extract_include_paths(&yaml, &compose_dir, &mut analysis.host_paths);
 
     Ok(analysis)
 }
@@ -218,6 +223,38 @@ fn extract_service_dangerous_settings(service: &serde_yml::Value, flags: &mut Ve
                             .unwrap_or_default();
                         flags.push(DangerousFlag::Sysctl(format!("{}={}", key_str, val_str)));
                     }
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+/// include ディレクティブからファイルパスを抽出
+///
+/// 形式:
+/// - `include: ["path/to/file.yml"]` (文字列リスト)
+/// - `include: [{path: "path/to/file.yml"}]` (マッピングリスト)
+fn extract_include_paths(
+    yaml: &serde_yml::Value,
+    compose_dir: &Path,
+    host_paths: &mut Vec<String>,
+) {
+    let Some(includes) = yaml.get("include").and_then(|v| v.as_sequence()) else {
+        return;
+    };
+
+    for item in includes {
+        match item {
+            serde_yml::Value::String(path) => {
+                host_paths.push(resolve_path(path, compose_dir));
+            }
+            serde_yml::Value::Mapping(map) => {
+                if let Some(path) = map
+                    .get(serde_yml::Value::String("path".to_string()))
+                    .and_then(|v| v.as_str())
+                {
+                    host_paths.push(resolve_path(path, compose_dir));
                 }
             }
             _ => {}
@@ -824,5 +861,81 @@ services:
             &sysctls[0],
             DangerousFlag::Sysctl(v) if v == "net.core.somaxconn=1024"
         ));
+    }
+
+    // --- Phase 5e: Compose include ---
+
+    #[test]
+    fn test_parse_compose_include_string_list() {
+        let yaml_str = r#"
+include:
+  - ./infra/compose.yml
+  - /opt/shared/compose.yml
+services:
+  web:
+    image: ubuntu
+"#;
+        let dir = tempfile::tempdir().unwrap();
+        let compose_path = dir.path().join("compose.yml");
+        std::fs::write(&compose_path, yaml_str).unwrap();
+
+        let analysis = analyze_compose(&compose_path).unwrap();
+        assert_eq!(analysis.host_paths.len(), 2);
+        assert!(analysis.host_paths[0].ends_with("/./infra/compose.yml"));
+        assert_eq!(analysis.host_paths[1], "/opt/shared/compose.yml");
+    }
+
+    #[test]
+    fn test_parse_compose_include_mapping_list() {
+        let yaml_str = r#"
+include:
+  - path: ./infra/compose.yml
+  - path: /opt/shared/compose.yml
+    env_file: .env
+services:
+  web:
+    image: ubuntu
+"#;
+        let dir = tempfile::tempdir().unwrap();
+        let compose_path = dir.path().join("compose.yml");
+        std::fs::write(&compose_path, yaml_str).unwrap();
+
+        let analysis = analyze_compose(&compose_path).unwrap();
+        assert_eq!(analysis.host_paths.len(), 2);
+        assert!(analysis.host_paths[0].ends_with("/./infra/compose.yml"));
+        assert_eq!(analysis.host_paths[1], "/opt/shared/compose.yml");
+    }
+
+    #[test]
+    fn test_parse_compose_include_mixed() {
+        let yaml_str = r#"
+include:
+  - ./local.yml
+  - path: /external/compose.yml
+services:
+  web:
+    image: ubuntu
+"#;
+        let dir = tempfile::tempdir().unwrap();
+        let compose_path = dir.path().join("compose.yml");
+        std::fs::write(&compose_path, yaml_str).unwrap();
+
+        let analysis = analyze_compose(&compose_path).unwrap();
+        assert_eq!(analysis.host_paths.len(), 2);
+    }
+
+    #[test]
+    fn test_parse_compose_no_include() {
+        let yaml_str = r#"
+services:
+  web:
+    image: ubuntu
+"#;
+        let dir = tempfile::tempdir().unwrap();
+        let compose_path = dir.path().join("compose.yml");
+        std::fs::write(&compose_path, yaml_str).unwrap();
+
+        let analysis = analyze_compose(&compose_path).unwrap();
+        assert!(analysis.host_paths.is_empty());
     }
 }

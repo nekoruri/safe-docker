@@ -919,3 +919,86 @@ fn test_wrapper_deny_label_disable_colon() {
         stderr
     );
 }
+
+// --- Phase 5e: --build-arg secret detection ---
+
+#[test]
+fn test_wrapper_ask_build_arg_password() {
+    // build-arg with secret is ask, non-interactive defaults to deny
+    let (_, stderr, exit_code) = run_wrapper(&[
+        "build",
+        "--build-arg",
+        "DB_PASSWORD=secret",
+        "-t",
+        "myapp",
+        ".",
+    ]);
+    assert_eq!(exit_code, 1);
+    assert!(
+        stderr.contains("DB_PASSWORD") || stderr.contains("secret"),
+        "--build-arg with PASSWORD should ask (deny in non-interactive): {}",
+        stderr
+    );
+}
+
+#[test]
+fn test_wrapper_allow_build_arg_safe() {
+    let (stdout, _, exit_code) = run_wrapper(&[
+        "build",
+        "--build-arg",
+        "APP_VERSION=1.0",
+        "-t",
+        "myapp",
+        ".",
+    ]);
+    assert_eq!(exit_code, 0);
+    assert!(
+        stdout.contains("build"),
+        "Non-secret build-arg should be allowed"
+    );
+}
+
+// --- Phase 5e: --secret / --ssh path validation ---
+
+#[test]
+fn test_wrapper_deny_build_secret_outside_home() {
+    let (_, stderr, exit_code) = run_wrapper(&[
+        "build",
+        "--secret",
+        "id=db,src=/etc/secrets/db.env",
+        "-t",
+        "myapp",
+        ".",
+    ]);
+    assert_eq!(exit_code, 1);
+    assert!(
+        stderr.contains("outside $HOME") || stderr.contains("/etc/secrets"),
+        "--secret src outside $HOME should be denied: {}",
+        stderr
+    );
+}
+
+#[test]
+fn test_wrapper_deny_build_ssh_outside_home() {
+    let (_, stderr, exit_code) = run_wrapper(&[
+        "build",
+        "--ssh",
+        "id=key,src=/etc/ssh/id_rsa",
+        "-t",
+        "myapp",
+        ".",
+    ]);
+    assert_eq!(exit_code, 1);
+    assert!(
+        stderr.contains("outside $HOME") || stderr.contains("/etc/ssh"),
+        "--ssh src outside $HOME should be denied: {}",
+        stderr
+    );
+}
+
+#[test]
+fn test_wrapper_allow_build_ssh_default() {
+    let (stdout, _, exit_code) = run_wrapper(&["build", "--ssh", "default", "-t", "myapp", "."]);
+    assert_eq!(exit_code, 0);
+    assert!(stdout.contains("build"), "--ssh default should be allowed");
+}
