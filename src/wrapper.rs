@@ -109,6 +109,7 @@ pub fn run(args: &[String], config: &Config, config_source: &str) -> i32 {
             None,
             &cwd,
             "wrapper",
+            Some(config_source),
         );
         audit::emit(&event, &config.audit);
     }
