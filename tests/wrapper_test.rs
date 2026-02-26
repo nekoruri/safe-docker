@@ -1002,3 +1002,67 @@ fn test_wrapper_allow_build_ssh_default() {
     assert_eq!(exit_code, 0);
     assert!(stdout.contains("build"), "--ssh default should be allowed");
 }
+
+// --- Phase 5b: Compose env_file ---
+
+/// 環境変数付きで CWD を指定してラッパーモードを実行
+fn run_wrapper_in_dir(args: &[&str], cwd: &std::path::Path) -> (String, String, i32) {
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_safe-docker"));
+    for arg in args {
+        cmd.arg(arg);
+    }
+    cmd.env("SAFE_DOCKER_DOCKER_PATH", "/bin/echo");
+    cmd.env_remove("SAFE_DOCKER_ACTIVE");
+    cmd.env_remove("SAFE_DOCKER_BYPASS");
+    cmd.env_remove("SAFE_DOCKER_ASK");
+    cmd.current_dir(cwd);
+    let output = cmd
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .expect("Failed to spawn safe-docker");
+
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    let exit_code = output.status.code().unwrap_or(-1);
+    (stdout, stderr, exit_code)
+}
+
+#[test]
+fn test_wrapper_deny_compose_env_file_outside_home() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("compose.yml"),
+        "services:\n  web:\n    image: ubuntu\n    env_file: /etc/secrets.env\n",
+    )
+    .unwrap();
+
+    let (_, stderr, exit_code) = run_wrapper_in_dir(&["compose", "up"], dir.path());
+    assert_eq!(exit_code, 1, "Should deny compose env_file outside $HOME");
+    assert!(
+        stderr.contains("env_file"),
+        "stderr should mention env_file: {}",
+        stderr
+    );
+}
+
+#[test]
+fn test_wrapper_allow_compose_env_file_relative() {
+    let dir = tempfile::tempdir().unwrap();
+    // $HOME 内にある相対パスの env_file は、CWD が tempdir なので $HOME 外として扱われる
+    // ただし相対パスは compose_dir 基準で解決されるので、tempdir/.env になる → $HOME 外 → deny
+    std::fs::write(
+        dir.path().join("compose.yml"),
+        "services:\n  web:\n    image: ubuntu\n    env_file: .env\n",
+    )
+    .unwrap();
+
+    let (_, stderr, exit_code) = run_wrapper_in_dir(&["compose", "up"], dir.path());
+    // tempdir は $HOME 外なので deny になる
+    assert_eq!(
+        exit_code, 1,
+        "env_file resolved outside $HOME should deny: {}",
+        stderr
+    );
+}

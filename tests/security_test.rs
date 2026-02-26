@@ -894,3 +894,60 @@ fn test_ask_compose_include_outside_home() {
     assert_eq!(exit_code, 0);
     assert_ask(&stdout, "compose include outside $HOME should ask");
 }
+
+// --- Phase 5b: Compose env_file ---
+
+#[test]
+fn test_deny_compose_env_file_outside_home() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("compose.yml"),
+        "services:\n  web:\n    image: ubuntu\n    env_file: /etc/secrets.env\n",
+    )
+    .unwrap();
+
+    let input = serde_json::json!({
+        "session_id": "test-session",
+        "hook_event_name": "PreToolUse",
+        "tool_name": "Bash",
+        "tool_input": {
+            "command": "docker compose up",
+            "description": "test"
+        },
+        "cwd": dir.path().to_str().unwrap()
+    })
+    .to_string();
+
+    let (stdout, exit_code) = run_hook(&input);
+    assert_eq!(exit_code, 0);
+    assert_deny(&stdout, "compose env_file outside $HOME should deny");
+}
+
+#[test]
+fn test_deny_compose_env_file_list_outside_home() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("compose.yml"),
+        "services:\n  web:\n    image: ubuntu\n    env_file:\n      - .env\n      - /etc/secrets.env\n",
+    )
+    .unwrap();
+
+    let input = serde_json::json!({
+        "session_id": "test-session",
+        "hook_event_name": "PreToolUse",
+        "tool_name": "Bash",
+        "tool_input": {
+            "command": "docker compose up",
+            "description": "test"
+        },
+        "cwd": dir.path().to_str().unwrap()
+    })
+    .to_string();
+
+    let (stdout, exit_code) = run_hook(&input);
+    assert_eq!(exit_code, 0);
+    assert_deny(
+        &stdout,
+        "compose env_file list with path outside $HOME should deny",
+    );
+}

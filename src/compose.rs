@@ -9,8 +9,10 @@ use crate::error::{Result, SafeDockerError};
 pub struct ComposeAnalysis {
     pub bind_mounts: Vec<BindMount>,
     pub dangerous_flags: Vec<DangerousFlag>,
-    /// include ディレクティブ等で参照されるホストパス
+    /// include ディレクティブで参照されるホストパス
     pub host_paths: Vec<String>,
+    /// env_file ディレクティブで参照されるホストパス
+    pub env_file_paths: Vec<String>,
 }
 
 /// docker-compose.yml からバインドマウントを抽出する
@@ -51,6 +53,13 @@ pub fn analyze_compose(compose_path: &Path) -> Result<ComposeAnalysis> {
         for (_service_name, service) in services {
             extract_service_volumes(service, &compose_dir, &mut analysis.bind_mounts);
             extract_service_dangerous_settings(service, &mut analysis.dangerous_flags);
+        }
+    }
+
+    // サービスの env_file パス抽出
+    if let Some(services) = yaml.get("services").and_then(|s| s.as_mapping()) {
+        for (_service_name, service) in services {
+            extract_service_env_file_paths(service, &compose_dir, &mut analysis.env_file_paths);
         }
     }
 
@@ -227,6 +236,51 @@ fn extract_service_dangerous_settings(service: &serde_yml::Value, flags: &mut Ve
             }
             _ => {}
         }
+    }
+}
+
+/// サービス定義から env_file パスを抽出
+///
+/// 形式:
+/// - `env_file: .env` (単一文字列)
+/// - `env_file: [".env", ".env.local"]` (文字列リスト)
+/// - `env_file: [{path: ".env", required: true}]` (マッピングリスト)
+fn extract_service_env_file_paths(
+    service: &serde_yml::Value,
+    compose_dir: &Path,
+    host_paths: &mut Vec<String>,
+) {
+    let Some(env_file) = service.get("env_file") else {
+        return;
+    };
+
+    match env_file {
+        // 単一文字列: env_file: .env
+        serde_yml::Value::String(path) => {
+            host_paths.push(resolve_path(path, compose_dir));
+        }
+        // リスト形式
+        serde_yml::Value::Sequence(seq) => {
+            for item in seq {
+                match item {
+                    // 文字列: env_file: [".env", ".env.local"]
+                    serde_yml::Value::String(path) => {
+                        host_paths.push(resolve_path(path, compose_dir));
+                    }
+                    // マッピング: env_file: [{path: ".env", required: true}]
+                    serde_yml::Value::Mapping(map) => {
+                        if let Some(path) = map
+                            .get(serde_yml::Value::String("path".to_string()))
+                            .and_then(|v| v.as_str())
+                        {
+                            host_paths.push(resolve_path(path, compose_dir));
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+        _ => {}
     }
 }
 
@@ -937,5 +991,121 @@ services:
 
         let analysis = analyze_compose(&compose_path).unwrap();
         assert!(analysis.host_paths.is_empty());
+    }
+
+    // --- Phase 5b: Compose env_file ---
+
+    #[test]
+    fn test_parse_compose_env_file_string() {
+        let yaml_str = r#"
+services:
+  web:
+    image: ubuntu
+    env_file: .env
+"#;
+        let dir = tempfile::tempdir().unwrap();
+        let compose_path = dir.path().join("compose.yml");
+        std::fs::write(&compose_path, yaml_str).unwrap();
+
+        let analysis = analyze_compose(&compose_path).unwrap();
+        assert_eq!(analysis.env_file_paths.len(), 1);
+        assert!(analysis.env_file_paths[0].ends_with("/.env"));
+    }
+
+    #[test]
+    fn test_parse_compose_env_file_list() {
+        let yaml_str = r#"
+services:
+  web:
+    image: ubuntu
+    env_file:
+      - .env
+      - .env.local
+"#;
+        let dir = tempfile::tempdir().unwrap();
+        let compose_path = dir.path().join("compose.yml");
+        std::fs::write(&compose_path, yaml_str).unwrap();
+
+        let analysis = analyze_compose(&compose_path).unwrap();
+        assert_eq!(analysis.env_file_paths.len(), 2);
+        assert!(analysis.env_file_paths[0].ends_with("/.env"));
+        assert!(analysis.env_file_paths[1].ends_with("/.env.local"));
+    }
+
+    #[test]
+    fn test_parse_compose_env_file_mapping_list() {
+        let yaml_str = r#"
+services:
+  web:
+    image: ubuntu
+    env_file:
+      - path: .env
+        required: true
+      - path: .env.local
+        required: false
+"#;
+        let dir = tempfile::tempdir().unwrap();
+        let compose_path = dir.path().join("compose.yml");
+        std::fs::write(&compose_path, yaml_str).unwrap();
+
+        let analysis = analyze_compose(&compose_path).unwrap();
+        assert_eq!(analysis.env_file_paths.len(), 2);
+        assert!(analysis.env_file_paths[0].ends_with("/.env"));
+        assert!(analysis.env_file_paths[1].ends_with("/.env.local"));
+    }
+
+    #[test]
+    fn test_parse_compose_env_file_absolute_path() {
+        let yaml_str = r#"
+services:
+  web:
+    image: ubuntu
+    env_file: /etc/secrets.env
+"#;
+        let dir = tempfile::tempdir().unwrap();
+        let compose_path = dir.path().join("compose.yml");
+        std::fs::write(&compose_path, yaml_str).unwrap();
+
+        let analysis = analyze_compose(&compose_path).unwrap();
+        assert_eq!(analysis.env_file_paths.len(), 1);
+        assert_eq!(analysis.env_file_paths[0], "/etc/secrets.env");
+    }
+
+    #[test]
+    fn test_parse_compose_env_file_multiple_services() {
+        let yaml_str = r#"
+services:
+  web:
+    image: ubuntu
+    env_file: .env.web
+  db:
+    image: postgres
+    env_file:
+      - .env.db
+      - /etc/db-secrets.env
+"#;
+        let dir = tempfile::tempdir().unwrap();
+        let compose_path = dir.path().join("compose.yml");
+        std::fs::write(&compose_path, yaml_str).unwrap();
+
+        let analysis = analyze_compose(&compose_path).unwrap();
+        assert_eq!(analysis.env_file_paths.len(), 3);
+    }
+
+    #[test]
+    fn test_parse_compose_no_env_file() {
+        let yaml_str = r#"
+services:
+  web:
+    image: ubuntu
+    environment:
+      - FOO=bar
+"#;
+        let dir = tempfile::tempdir().unwrap();
+        let compose_path = dir.path().join("compose.yml");
+        std::fs::write(&compose_path, yaml_str).unwrap();
+
+        let analysis = analyze_compose(&compose_path).unwrap();
+        assert!(analysis.env_file_paths.is_empty());
     }
 }

@@ -64,7 +64,7 @@
 - [x] `--env-file PATH` のパス検証（$HOME 外 → deny、sensitive_paths → ask）
 - [x] `--label-file PATH` のパス検証
 - [x] `--security-opt seccomp=PROFILE_PATH` のパス検証（`unconfined` 以外のパスを検証）
-- [ ] Compose `env_file:` の対応
+- [x] Compose `env_file:` の対応（文字列・リスト・マッピング形式の全パース、$HOME 外 → deny）
 
 ### Phase 5c: blocked_capabilities デフォルト拡充 ✅
 - [x] `DAC_READ_SEARCH` 追加（`open_by_handle_at(2)` によるファイルシステム直接アクセス）
