@@ -1003,6 +1003,208 @@ fn test_wrapper_allow_build_ssh_default() {
     assert!(stdout.contains("build"), "--ssh default should be allowed");
 }
 
+// --- verbose 拡張テスト ---
+
+#[test]
+fn test_wrapper_verbose_shows_config_and_docker() {
+    // --verbose で設定ソースと docker 解決結果が表示される
+    let (_stdout, stderr, exit_code) =
+        run_wrapper(&["--verbose", "--dry-run", "run", "ubuntu", "echo", "hello"]);
+    assert_eq!(exit_code, 0);
+    assert!(
+        stderr.contains("[safe-docker] Config:"),
+        "verbose should show config source: {}",
+        stderr
+    );
+    assert!(
+        stderr.contains("[safe-docker] Docker:"),
+        "verbose should show docker resolution: {}",
+        stderr
+    );
+    // SAFE_DOCKER_DOCKER_PATH=/bin/echo を使っているので source が表示される
+    assert!(
+        stderr.contains("SAFE_DOCKER_DOCKER_PATH"),
+        "verbose should show docker source via env var: {}",
+        stderr
+    );
+}
+
+#[test]
+fn test_wrapper_verbose_deny_shows_config() {
+    // deny 時にも設定情報が表示される
+    let (_stdout, stderr, exit_code) = run_wrapper(&["--verbose", "run", "--privileged", "ubuntu"]);
+    assert_eq!(exit_code, 1);
+    assert!(
+        stderr.contains("[safe-docker] Config:"),
+        "verbose deny should show config: {}",
+        stderr
+    );
+    assert!(
+        stderr.contains("Tip:"),
+        "verbose deny should show tips: {}",
+        stderr
+    );
+}
+
+#[test]
+fn test_wrapper_non_verbose_no_config_info() {
+    // --verbose なしでは設定情報が表示されない
+    let (_stdout, stderr, exit_code) =
+        run_wrapper(&["--dry-run", "run", "ubuntu", "echo", "hello"]);
+    assert_eq!(exit_code, 0);
+    assert!(
+        !stderr.contains("[safe-docker] Config:"),
+        "non-verbose should not show config: {}",
+        stderr
+    );
+    assert!(
+        !stderr.contains("[safe-docker] Docker:"),
+        "non-verbose should not show docker resolution: {}",
+        stderr
+    );
+}
+
+// --- docker not found の詳細エラーテスト ---
+
+#[test]
+fn test_wrapper_docker_not_found_detailed_error() {
+    // 存在しない docker パスを指定し、PATH からも見つからない場合
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_safe-docker"));
+    cmd.args(["ps"]);
+    cmd.env("SAFE_DOCKER_DOCKER_PATH", "/nonexistent/docker_abc");
+    cmd.env("PATH", "/nonexistent_path_only");
+    cmd.env_remove("SAFE_DOCKER_ACTIVE");
+    cmd.env_remove("SAFE_DOCKER_BYPASS");
+    let output = cmd
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .expect("Failed to spawn safe-docker");
+
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    let exit_code = output.status.code().unwrap_or(-1);
+    assert_eq!(exit_code, 1);
+    assert!(
+        stderr.contains("could not find the real docker binary"),
+        "Should show not found error: {}",
+        stderr
+    );
+    assert!(
+        stderr.contains("SAFE_DOCKER_DOCKER_PATH=/nonexistent/docker_abc"),
+        "Should show tried env var: {}",
+        stderr
+    );
+    assert!(
+        stderr.contains("Tip:"),
+        "Should show tip for resolution: {}",
+        stderr
+    );
+}
+
+// --- --check-config に docker 解決情報が含まれる ---
+
+#[test]
+fn test_check_config_shows_docker_resolution() {
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_safe-docker"));
+    cmd.arg("--check-config");
+    cmd.env("SAFE_DOCKER_DOCKER_PATH", "/bin/echo");
+    let output = cmd
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .expect("Failed to spawn safe-docker");
+
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    assert!(
+        stderr.contains("Docker binary resolution:"),
+        "check-config should show docker resolution section: {}",
+        stderr
+    );
+    assert!(
+        stderr.contains("Found:") && stderr.contains("/bin/echo"),
+        "check-config should show found docker path: {}",
+        stderr
+    );
+    assert!(
+        stderr.contains("SAFE_DOCKER_DOCKER_PATH"),
+        "check-config should show docker source: {}",
+        stderr
+    );
+}
+
+#[test]
+fn test_check_config_shows_docker_not_found() {
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_safe-docker"));
+    cmd.arg("--check-config");
+    cmd.env("SAFE_DOCKER_DOCKER_PATH", "/nonexistent/docker");
+    cmd.env("PATH", "/nonexistent_path_only");
+    let output = cmd
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .expect("Failed to spawn safe-docker");
+
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    assert!(
+        stderr.contains("Docker binary resolution:"),
+        "check-config should show docker resolution section: {}",
+        stderr
+    );
+    assert!(
+        stderr.contains("WARNING: docker binary not found"),
+        "check-config should warn about missing docker: {}",
+        stderr
+    );
+}
+
+// --- 設定ファイルパース失敗時の警告テスト ---
+
+#[test]
+fn test_wrapper_config_parse_failure_warning() {
+    let dir = tempfile::tempdir().unwrap();
+    let config_path = dir.path().join("safe-docker").join("config.toml");
+    std::fs::create_dir_all(config_path.parent().unwrap()).unwrap();
+    // 不正な TOML を書き込む
+    std::fs::write(&config_path, "{{invalid toml content").unwrap();
+
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_safe-docker"));
+    cmd.args(["--dry-run", "ps"]);
+    cmd.env("SAFE_DOCKER_DOCKER_PATH", "/bin/echo");
+    // XDG_CONFIG_HOME を一時ディレクトリに設定して config パスを上書き
+    cmd.env("XDG_CONFIG_HOME", dir.path());
+    cmd.env_remove("SAFE_DOCKER_ACTIVE");
+    cmd.env_remove("SAFE_DOCKER_BYPASS");
+    let output = cmd
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .expect("Failed to spawn safe-docker");
+
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    // 設定パース失敗の警告が表示される
+    assert!(
+        stderr.contains("WARNING") && stderr.contains("Failed to load"),
+        "Should warn about config parse failure: {}",
+        stderr
+    );
+    assert!(
+        stderr.contains("--check-config"),
+        "Should suggest running --check-config: {}",
+        stderr
+    );
+    // デフォルト設定で動作するので dry-run は成功する
+    let exit_code = output.status.code().unwrap_or(-1);
+    assert_eq!(
+        exit_code, 0,
+        "Should still work with default config: {}",
+        stderr
+    );
+}
+
 // --- Phase 5b: Compose env_file ---
 
 /// 環境変数付きで CWD を指定してラッパーモードを実行

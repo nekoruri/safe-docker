@@ -43,11 +43,28 @@ fn main() {
 
     match mode {
         RunMode::Wrapper(docker_args) => {
-            let mut config = match config::Config::load() {
-                Ok(config) => config,
+            let cfg_path = config::config_path();
+            let (mut config, config_source) = match config::Config::load() {
+                Ok(config) => {
+                    let source = if cfg_path.exists() {
+                        format!("{}", cfg_path.display())
+                    } else {
+                        "(default - no config file)".to_string()
+                    };
+                    (config, source)
+                }
                 Err(e) => {
-                    log::warn!("Failed to load config, using defaults: {}", e);
-                    config::Config::default()
+                    // ファイルが存在するのにパース失敗 → ユーザーのミスの可能性
+                    eprintln!(
+                        "[safe-docker] WARNING: Failed to load {}: {}",
+                        cfg_path.display(),
+                        e
+                    );
+                    eprintln!(
+                        "[safe-docker] Using default configuration. Run --check-config to diagnose."
+                    );
+                    let source = format!("{} (FAILED, using defaults)", cfg_path.display());
+                    (config::Config::default(), source)
                 }
             };
             // --docker-path CLI オプションで上書き
@@ -56,7 +73,7 @@ fn main() {
             }
             // --docker-path を docker 引数から除去
             let docker_args: Vec<String> = remove_option_from_args(&docker_args, "--docker-path");
-            std::process::exit(wrapper::run(&docker_args, &config));
+            std::process::exit(wrapper::run(&docker_args, &config, &config_source));
         }
         RunMode::Hook => {
             run_hook_mode();
@@ -306,6 +323,21 @@ fn run_check_config(args: &[String]) -> i32 {
 
     // 現在の設定を表示
     print_config_summary(&config);
+
+    // Docker バイナリ解決チェック
+    eprintln!("Docker binary resolution:");
+    match wrapper::find_real_docker_detailed(&config) {
+        Ok(res) => {
+            eprintln!("  Found: {} (via {})", res.path.display(), res.source);
+        }
+        Err(tried) => {
+            eprintln!("  WARNING: docker binary not found");
+            for t in &tried {
+                eprintln!("    {}", t);
+            }
+        }
+    }
+    eprintln!();
 
     // バリデーション実行
     let issues = config.validate();

@@ -84,6 +84,11 @@ fn default_config_path() -> PathBuf {
         .join("config.toml")
 }
 
+/// 設定ファイルのデフォルトパスを返す（外部から参照可能）
+pub fn config_path() -> PathBuf {
+    default_config_path()
+}
+
 /// $HOME 配下で ask にするデフォルトの機密パス (相対)
 fn default_sensitive_paths() -> Vec<String> {
     vec![
