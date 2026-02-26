@@ -108,6 +108,8 @@ OS 引数 → wrapper::run()
 - 新しい危険フラグを追加する場合: `DangerousFlag` enum → `parse_docker_args()` で検出 → `policy::evaluate()` で判定
 - 新しいパス検証を追加する場合: `DockerCommand::host_paths` に追加 → policy が自動で検証
 - Compose の危険設定: `extract_service_dangerous_settings()` に追加
+- Compose のホストファイル参照: `extract_service_env_file_paths()` で `env_file_paths` に追加 → policy が deny で検証
+- Compose の外部ファイル参照: `extract_include_paths()` で `host_paths` に追加 → policy が ask で検証
 - **テストは必須**: セキュリティツールなので、すべての修正にテストを付ける
 - **clippy を通す**: `cargo clippy -- -D warnings` が通ること
 

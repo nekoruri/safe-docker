@@ -1,9 +1,13 @@
 [package]
 name = "safe-docker"
-version = "0.4.0"
+version = "0.5.0"
 edition = "2024"
 description = "Safe Docker command wrapper and Claude Code hook for container security"
 license = "MIT OR Apache-2.0"
+repository = "https://github.com/nekoruri/safe-docker"
+readme = "README.md"
+keywords = ["docker", "security", "cli", "container", "hook"]
+categories = ["command-line-utilities", "development-tools"]
 
 [features]
 default = []

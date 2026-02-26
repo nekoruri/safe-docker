@@ -10,6 +10,7 @@
 | v0.2.0 | - | セキュリティ強化（security-opt, namespace flags, docker cp/build パス検証, Compose 危険設定検出） |
 | v0.3.0 | 2026-02 | Wrapper モード追加（docker 置換、対話的確認、--dry-run、--verbose、監査ログ mode フィールド） |
 | v0.4.0 | 2026-02 | セキュリティ強化（コンテナ間 namespace 共有検出、mount propagation 検出、sensitive_paths 拡充）、Artifact Attestations 導入 |
+| v0.5.0 | 2026-02 | セキュリティ大幅強化: パーサー正確性改善、ホストファイル読み取り防止、capability 拡充、sysctl/add-host 検出、ビルド時安全性、Compose env_file/include/sysctls 対応 |
 
 ## 完了済みタスク
 
@@ -51,38 +52,40 @@
 - [x] sensitive_paths デフォルト拡充（.terraform, .vault-token, .config/gh, .npmrc, .pypirc）
 - [x] Compose の container:/service: namespace 参照検出
 
-## 未着手タスク
+### Phase 5: セキュリティ大幅強化 (v0.5.0)
 
-> 攻撃面分析の詳細は [docs/ATTACK_SURFACE_ANALYSIS.md](ATTACK_SURFACE_ANALYSIS.md) を参照。
-
-### Phase 5a: パーサー正確性の改善 ✅
+#### 5a: パーサー正確性の改善
 - [x] `is_flag_with_value()` 欠損フラグ補完（`--env-file`, `--label-file`, `--uts`, `--pid`, `--device-*`, `--cpu-*` 等 25+ フラグ）
 - [x] `--uts=host` 検出（CIS 5.11 準拠。`DangerousFlag::UtsHost` 追加）
 - [x] `--uts` の Compose 対応（`uts: host`）
 
-### Phase 5b: ホストファイル読み取りの防止 ✅
+#### 5b: ホストファイル読み取りの防止
 - [x] `--env-file PATH` のパス検証（$HOME 外 → deny、sensitive_paths → ask）
 - [x] `--label-file PATH` のパス検証
 - [x] `--security-opt seccomp=PROFILE_PATH` のパス検証（`unconfined` 以外のパスを検証）
 - [x] Compose `env_file:` の対応（文字列・リスト・マッピング形式の全パース、$HOME 外 → deny）
 
-### Phase 5c: blocked_capabilities デフォルト拡充 ✅
+#### 5c: blocked_capabilities デフォルト拡充
 - [x] `DAC_READ_SEARCH` 追加（`open_by_handle_at(2)` によるファイルシステム直接アクセス）
 - [x] `NET_ADMIN` 追加（iptables 操作、ARP スプーフィング、promiscuous モード）
 - [x] `BPF` 追加（eBPF プログラムロード。カーネル空間でコード実行）
 - [x] `PERFMON` 追加（パフォーマンスモニタリング。サイドチャネル攻撃）
 - [x] `SYS_BOOT` 追加（ホスト再起動）
 
-### Phase 5d: ネットワーク/カーネル操作の検出 ✅
+#### 5d: ネットワーク/カーネル操作の検出
 - [x] `--sysctl` 危険値検出（`kernel.*` → deny、`net.*` → ask、その他 → allow）
 - [x] `--add-host` のメタデータ IP 検出（169.254.169.254、fd00:ec2::254 → ask）
 - [x] Compose `sysctls:` の対応（リスト形式・マッピング形式の両方）
 - [x] CIS 5.2 対応: `--security-opt label=disable` / `label:disable` 検出
 
-### Phase 5e: ビルド時の安全性 ✅
+#### 5e: ビルド時の安全性
 - [x] `docker build --build-arg` の機密情報パターン検出（`SECRET`, `PASSWORD`, `TOKEN`, `KEY` → ask）
 - [x] BuildKit `--secret` / `--ssh` フラグの検証（ソースパスの $HOME 外アクセス → deny）
 - [x] Compose `include:` ディレクティブ（外部ファイル参照）の対応（$HOME 外 → ask）
+
+## 未着手タスク
+
+> 攻撃面分析の詳細は [docs/ATTACK_SURFACE_ANALYSIS.md](ATTACK_SURFACE_ANALYSIS.md) を参照。
 
 ### 機能: ask レベル化
 - [ ] ask に deep/minor のレベルを導入

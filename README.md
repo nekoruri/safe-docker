@@ -84,17 +84,25 @@ OPA Docker AuthZ プラグインを最終防衛線として併用可能。safe-d
 | `--cap-add SYS_ADMIN` 等 | 危険な Linux capability の付与 |
 | `--security-opt apparmor=unconfined` | セキュリティプロファイルの無効化 |
 | `--security-opt seccomp=unconfined` | システムコールフィルタの無効化 |
+| `--security-opt label=disable` | SELinux ラベリングの無効化 (CIS 5.2) |
 | `--pid=host` | ホストの PID 名前空間へのアクセス |
 | `--network=host` | ホストのネットワークスタックへのアクセス |
 | `--userns=host` | ホストのユーザー名前空間へのアクセス |
 | `--cgroupns=host` | ホストの cgroup 名前空間へのアクセス |
 | `--ipc=host` | ホストの IPC 名前空間へのアクセス |
+| `--uts=host` | ホストの UTS 名前空間へのアクセス (CIS 5.11) |
 | `--device` | ホストデバイスの直接マウント |
 | `--volumes-from` | 他コンテナからの危険なマウント継承 (ask) |
 | `--network=container:NAME` | 他コンテナのネットワーク名前空間への参加 |
 | `--pid=container:NAME` | 他コンテナのプロセス名前空間への参加 |
 | `--ipc=container:NAME` | 他コンテナの IPC 名前空間への参加 |
 | `-v ...:shared` / `bind-propagation=shared` | マウント変更がホストに伝搬 |
+| `--sysctl kernel.*` | カーネルパラメータの操作 |
+| `--sysctl net.*` | ネットワーク設定の変更 (ask) |
+| `--add-host HOST:169.254.169.254` | クラウドメタデータエンドポイントへの参照 (ask) |
+| `--env-file PATH` / `--label-file PATH` | $HOME 外のホストファイル読み取り |
+| `--build-arg SECRET=...` | ビルド引数に機密情報パターン (ask) |
+| `--secret src=PATH` / `--ssh src=PATH` | BuildKit ソースパスの $HOME 外アクセス |
 
 ### 3. シェル間接実行の検出（Hook モードのみ）
 
@@ -123,11 +131,17 @@ OPA Docker AuthZ プラグインを最終防衛線として併用可能。safe-d
 `docker-compose.yml` のサービス定義から危険な設定を検出する。
 
 - `privileged: true` → **deny**
-- `network_mode: host` → **deny**
-- `pid: host` → **deny**
-- `cap_add: [SYS_ADMIN]` → **deny**
-- `security_opt: [apparmor:unconfined]` → **deny**
+- `network_mode: host` / `container:NAME` → **deny**
+- `pid: host` / `container:NAME` → **deny**
+- `ipc: host` / `container:NAME` → **deny**
+- `userns_mode: host` → **deny**
+- `uts: host` → **deny**
+- `cap_add: [SYS_ADMIN, ...]` → **deny**（blocked_capabilities に該当するもの）
+- `security_opt: [apparmor:unconfined, ...]` → **deny**
 - `devices: [/dev/sda]` → **deny**
+- `sysctls: kernel.*` → **deny** / `net.*` → **ask**
+- `env_file: /etc/secrets.env` → **deny**（$HOME 外パス）
+- `include: [/opt/shared/compose.yml]` → **ask**（$HOME 外パス）
 
 ### 7. イメージホワイトリスト（オプション）
 
@@ -301,7 +315,7 @@ sensitive_paths = [".ssh", ".aws", ".gnupg", ".docker", ".kube", ".config/gcloud
 blocked_flags = ["--privileged", "--pid=host", "--network=host"]
 
 # ブロックする capability
-blocked_capabilities = ["SYS_ADMIN", "SYS_PTRACE", "SYS_MODULE", "SYS_RAWIO", "ALL"]
+blocked_capabilities = ["SYS_ADMIN", "SYS_PTRACE", "SYS_MODULE", "SYS_RAWIO", "ALL", "DAC_READ_SEARCH", "NET_ADMIN", "BPF", "PERFMON", "SYS_BOOT"]
 
 # イメージホワイトリスト (空=制限なし)
 allowed_images = []
