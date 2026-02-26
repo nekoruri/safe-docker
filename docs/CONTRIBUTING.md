@@ -6,6 +6,9 @@ safe-docker はセキュリティツールのため、変更の手順漏れが�
 ## 開発環境のセットアップ
 
 ```bash
+# pre-commit hook の有効化（cargo fmt を自動チェック）
+git config core.hooksPath scripts
+
 # ビルド
 cargo build --release
 

@@ -1,0 +1,13 @@
+#!/bin/sh
+# pre-commit hook: フォーマットチェック
+# ステージされた Rust ファイルがある場合のみ cargo fmt --check を実行
+
+# ステージされた .rs ファイルがあるか確認
+if git diff --cached --name-only --diff-filter=ACM | grep -q '\.rs$'; then
+    cargo fmt --check 2>&1
+    if [ $? -ne 0 ]; then
+        echo ""
+        echo "[pre-commit] cargo fmt --check failed. Run 'cargo fmt' to fix."
+        exit 1
+    fi
+fi
