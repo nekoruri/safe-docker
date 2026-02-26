@@ -815,3 +815,82 @@ fn test_sysctl_does_not_eat_privileged() {
     assert_eq!(exit_code, 0);
     assert_deny(&stdout, "--sysctl should not eat --privileged flag");
 }
+
+// --- Phase 5e: --build-arg secret pattern detection ---
+
+#[test]
+fn test_ask_build_arg_password() {
+    let input = make_bash_input("docker build --build-arg DB_PASSWORD=secret123 -t myapp .");
+    let (stdout, exit_code) = run_hook(&input);
+    assert_eq!(exit_code, 0);
+    assert_ask(&stdout, "--build-arg with PASSWORD should ask");
+}
+
+#[test]
+fn test_ask_build_arg_token_equals() {
+    let input = make_bash_input("docker build --build-arg=API_TOKEN=abc123 -t myapp .");
+    let (stdout, exit_code) = run_hook(&input);
+    assert_eq!(exit_code, 0);
+    assert_ask(&stdout, "--build-arg=API_TOKEN should ask");
+}
+
+#[test]
+fn test_allow_build_arg_safe() {
+    let home = dirs::home_dir().unwrap().to_string_lossy().to_string();
+    let cmd = format!(
+        "docker build --build-arg APP_VERSION=1.0 -t myapp {}/project",
+        home
+    );
+    let (stdout, exit_code) = run_hook(&make_bash_input(&cmd));
+    assert_eq!(exit_code, 0);
+    assert!(
+        stdout.trim().is_empty(),
+        "Non-secret build-arg should be allowed"
+    );
+}
+
+// --- Phase 5e: --secret / --ssh path validation ---
+
+#[test]
+fn test_deny_build_secret_outside_home() {
+    let input = make_bash_input("docker build --secret id=db,src=/etc/secrets/db.env -t myapp .");
+    let (stdout, exit_code) = run_hook(&input);
+    assert_eq!(exit_code, 0);
+    assert_deny(&stdout, "--secret src outside $HOME should be denied");
+}
+
+#[test]
+fn test_deny_build_ssh_outside_home() {
+    let input = make_bash_input("docker build --ssh id=key,src=/etc/ssh/id_rsa -t myapp .");
+    let (stdout, exit_code) = run_hook(&input);
+    assert_eq!(exit_code, 0);
+    assert_deny(&stdout, "--ssh src outside $HOME should be denied");
+}
+
+// --- Phase 5e: Compose include outside $HOME ---
+
+#[test]
+fn test_ask_compose_include_outside_home() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("compose.yml"),
+        "include:\n  - /opt/shared/compose.yml\nservices:\n  web:\n    image: ubuntu\n",
+    )
+    .unwrap();
+
+    let input = serde_json::json!({
+        "session_id": "test-session",
+        "hook_event_name": "PreToolUse",
+        "tool_name": "Bash",
+        "tool_input": {
+            "command": "docker compose up",
+            "description": "test"
+        },
+        "cwd": dir.path().to_str().unwrap()
+    })
+    .to_string();
+
+    let (stdout, exit_code) = run_hook(&input);
+    assert_eq!(exit_code, 0);
+    assert_ask(&stdout, "compose include outside $HOME should ask");
+}

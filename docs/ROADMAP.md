@@ -79,10 +79,10 @@
 - [x] Compose `sysctls:` の対応（リスト形式・マッピング形式の両方）
 - [x] CIS 5.2 対応: `--security-opt label=disable` / `label:disable` 検出
 
-### Phase 5e: ビルド時の安全性（中優先度）
-- [ ] `docker build --build-arg` の機密情報パターン検出（`SECRET`, `PASSWORD`, `TOKEN`, `KEY` → ask）
-- [ ] BuildKit `--secret` / `--ssh` フラグの検証
-- [ ] Compose `include:` ディレクティブ（外部ファイル参照）の対応
+### Phase 5e: ビルド時の安全性 ✅
+- [x] `docker build --build-arg` の機密情報パターン検出（`SECRET`, `PASSWORD`, `TOKEN`, `KEY` → ask）
+- [x] BuildKit `--secret` / `--ssh` フラグの検証（ソースパスの $HOME 外アクセス → deny）
+- [x] Compose `include:` ディレクティブ（外部ファイル参照）の対応（$HOME 外 → ask）
 
 ### 機能: ask レベル化
 - [ ] ask に deep/minor のレベルを導入

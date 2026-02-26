@@ -76,6 +76,10 @@ Docker デーモンの認可プラグイン。全 Docker クライアントに�
 | **`--sysctl net.*`** | **検出済み (v0.5.0)** | ネットワーク設定変更 → ask |
 | **`--add-host` メタデータ IP** | **検出済み (v0.5.0)** | 169.254.169.254 / fd00:ec2::254 → ask |
 | **`--security-opt label=disable`** | **検出済み (v0.5.0)** | SELinux ラベリング無効化（CIS 5.2） → deny |
+| **`--build-arg SECRET/PASSWORD/TOKEN`** | **検出済み (v0.5.0)** | ビルド引数に機密情報パターン → ask |
+| **`--secret src=PATH`** | **検出済み (v0.5.0)** | BuildKit secret ソースパスの $HOME 外アクセス → deny |
+| **`--ssh src=PATH`** | **検出済み (v0.5.0)** | BuildKit SSH ソースパスの $HOME 外アクセス → deny |
+| **Compose `include:`** | **検出済み (v0.5.0)** | 外部ファイル参照の $HOME 外パス → ask |
 
 > 詳細: [docs/ATTACK_SURFACE_ANALYSIS.md](docs/ATTACK_SURFACE_ANALYSIS.md)
 
@@ -126,6 +130,9 @@ Docker デーモンの認可プラグイン。全 Docker クライアントに�
 | `--sysctl kernel.*` | deny | カーネルパラメータ操作 |
 | `--sysctl net.*` | ask | ネットワーク設定変更 |
 | `--add-host HOST:169.254.169.254` | ask | クラウドメタデータエンドポイント |
+| `--build-arg KEY=VALUE` | ask | KEY に SECRET/PASSWORD/TOKEN 等のパターンを含む場合 |
+| `--secret id=...,src=PATH` | パス検証 | BuildKit secret ソースパスの検証 |
+| `--ssh id=...,src=PATH` | パス検証 | BuildKit SSH ソースパスの検証 |
 
 ### バインドマウント
 
@@ -178,6 +185,7 @@ Docker デーモンの認可プラグイン。全 Docker クライアントに�
 | `devices: [/dev/...]` | deny |
 | `sysctls: kernel.*` | deny |
 | `sysctls: net.*` | ask |
+| `include:` (外部ファイル参照) | ask ($HOME 外パス) |
 
 ## 脆弱性報告
 
