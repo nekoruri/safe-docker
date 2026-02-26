@@ -376,6 +376,12 @@ fn generate_tips(reason: &str) -> Vec<String> {
                 .to_string(),
         );
     }
+    if reason.contains("Compose env_file") {
+        tips.push(
+            "Compose env_file reads host files into container environment. Ensure the file is within $HOME or add its path to allowed_paths"
+                .to_string(),
+        );
+    }
     if reason.contains("Compose include") {
         tips.push(
             "Compose include references external files that may contain dangerous settings. Verify the included file is safe"

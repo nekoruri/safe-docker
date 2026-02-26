@@ -160,7 +160,23 @@ pub fn evaluate(cmd: &DockerCommand, config: &Config, cwd: &str) -> Decision {
             Ok(analysis) => {
                 all_mounts.extend(analysis.bind_mounts);
                 all_flags.extend(analysis.dangerous_flags);
-                // include ディレクティブ等のホストパスを検証
+                // env_file ディレクティブのパスを検証（--env-file と同様、$HOME 外は deny）
+                for path in &analysis.env_file_paths {
+                    match path_validator::validate_path(path, config) {
+                        PathVerdict::Allowed => {}
+                        PathVerdict::Sensitive(reason) => {
+                            ask_reasons.push(reason);
+                        }
+                        PathVerdict::Denied(reason) => {
+                            deny_reasons
+                                .push(format!("Compose env_file references {}: {}", path, reason));
+                        }
+                        PathVerdict::Unresolvable(reason) => {
+                            ask_reasons.push(reason);
+                        }
+                    }
+                }
+                // include ディレクティブのホストパスを検証
                 for path in &analysis.host_paths {
                     match path_validator::validate_path(path, config) {
                         PathVerdict::Allowed => {}
@@ -1180,6 +1196,63 @@ mod tests {
             matches!(decision, Decision::Deny(_)),
             "--secret src outside $HOME should be denied: {:?}",
             decision
+        );
+    }
+
+    // --- Phase 5b: Compose env_file path validation ---
+
+    #[test]
+    fn test_evaluate_compose_env_file_outside_home() {
+        let config = Config::default();
+        let dir = tempfile::tempdir().unwrap();
+        let yaml = "services:\n  web:\n    image: ubuntu\n    env_file: /etc/secrets.env\n";
+        std::fs::write(dir.path().join("compose.yml"), yaml).unwrap();
+        let cmd = DockerCommand {
+            subcommand: DockerSubcommand::ComposeUp,
+            bind_mounts: vec![],
+            dangerous_flags: vec![],
+            compose_file: None,
+            image: None,
+            host_paths: vec![],
+        };
+        let decision = evaluate(&cmd, &config, dir.path().to_str().unwrap());
+        assert!(
+            matches!(decision, Decision::Deny(_)),
+            "Compose env_file outside $HOME should deny: {:?}",
+            decision
+        );
+        if let Decision::Deny(reason) = &decision {
+            assert!(
+                reason.contains("env_file"),
+                "Deny reason should mention env_file: {}",
+                reason
+            );
+        }
+    }
+
+    #[test]
+    fn test_evaluate_compose_env_file_inside_home() {
+        let config = Config::default();
+        let dir = tempfile::tempdir().unwrap();
+        let home = dirs::home_dir().unwrap();
+        let yaml = format!(
+            "services:\n  web:\n    image: ubuntu\n    env_file: {}/.env\n",
+            home.display()
+        );
+        std::fs::write(dir.path().join("compose.yml"), yaml).unwrap();
+        let cmd = DockerCommand {
+            subcommand: DockerSubcommand::ComposeUp,
+            bind_mounts: vec![],
+            dangerous_flags: vec![],
+            compose_file: None,
+            image: None,
+            host_paths: vec![],
+        };
+        let decision = evaluate(&cmd, &config, dir.path().to_str().unwrap());
+        assert_eq!(
+            decision,
+            Decision::Allow,
+            "Compose env_file inside $HOME should be allowed"
         );
     }
 }
