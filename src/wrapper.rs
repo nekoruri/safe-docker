@@ -5,36 +5,42 @@ use crate::config::{Config, NonInteractiveAsk};
 use crate::hook::Decision;
 use crate::{audit, docker_args, policy};
 
+/// Docker バイナリの検索結果
+pub struct DockerResolution {
+    /// 発見されたバイナリのパス
+    pub path: PathBuf,
+    /// 検索ソース（"SAFE_DOCKER_DOCKER_PATH", "wrapper.docker_path", "PATH"）
+    pub source: &'static str,
+}
+
 /// ラッパーモードのメインエントリポイント
 ///
 /// docker 引数を評価し、Decision に応じてアクションを実行する。
 /// - Allow → 本物の docker を exec
 /// - Deny → stderr にエラー表示 + exit 1
 /// - Ask → 対話的確認（非対話環境では設定に従う）
-pub fn run(args: &[String], config: &Config) -> i32 {
+pub fn run(args: &[String], config: &Config, config_source: &str) -> i32 {
     // 再帰呼び出し防止チェック
     if std::env::var("SAFE_DOCKER_ACTIVE").is_ok_and(|v| v == "1") {
         // 既に safe-docker 経由 → 本物の docker を直接実行
-        let docker_path = match find_real_docker(config) {
-            Some(p) => p,
-            None => {
-                eprintln!("[safe-docker] Error: could not find the real docker binary");
+        match find_real_docker_detailed(config) {
+            Ok(res) => exec_docker(&res.path, args), // never returns
+            Err(tried) => {
+                print_docker_not_found(&tried);
                 return 1;
             }
-        };
-        exec_docker(&docker_path, args); // never returns
+        }
     }
 
     // バイパスモード
     if std::env::var("SAFE_DOCKER_BYPASS").is_ok_and(|v| v == "1") {
-        let docker_path = match find_real_docker(config) {
-            Some(p) => p,
-            None => {
-                eprintln!("[safe-docker] Error: could not find the real docker binary");
+        match find_real_docker_detailed(config) {
+            Ok(res) => exec_docker(&res.path, args), // never returns
+            Err(tried) => {
+                print_docker_not_found(&tried);
                 return 1;
             }
-        };
-        exec_docker(&docker_path, args); // never returns
+        }
     }
 
     // CWD 取得
@@ -54,6 +60,26 @@ pub fn run(args: &[String], config: &Config) -> i32 {
         .filter(|a| *a != "--dry-run" && *a != "--verbose")
         .cloned()
         .collect();
+
+    // verbose: 設定ソースと docker 解決結果を表示
+    if verbose {
+        eprintln!("[safe-docker] Config: {}", config_source);
+        match find_real_docker_detailed(config) {
+            Ok(ref res) => {
+                eprintln!(
+                    "[safe-docker] Docker: {} (via {})",
+                    res.path.display(),
+                    res.source
+                );
+            }
+            Err(ref tried) => {
+                eprintln!("[safe-docker] Docker: not found");
+                for t in tried {
+                    eprintln!("[safe-docker]   {}", t);
+                }
+            }
+        }
+    }
 
     // 監査ログ
     let audit_enabled = audit::is_enabled(&config.audit);
@@ -101,14 +127,13 @@ pub fn run(args: &[String], config: &Config) -> i32 {
                 );
                 return 0;
             }
-            let docker_path = match find_real_docker(config) {
-                Some(p) => p,
-                None => {
-                    eprintln!("[safe-docker] Error: could not find the real docker binary");
-                    return 1;
+            match find_real_docker_detailed(config) {
+                Ok(res) => exec_docker(&res.path, &docker_args), // never returns
+                Err(tried) => {
+                    print_docker_not_found(&tried);
+                    1
                 }
-            };
-            exec_docker(&docker_path, &docker_args); // never returns
+            }
         }
         Decision::Deny(reason) => {
             eprintln!("{}", reason);
@@ -172,14 +197,13 @@ fn handle_ask(reason: &str, docker_args: &[String], config: &Config, verbose: bo
         match ask_policy {
             NonInteractiveAsk::Allow => {
                 eprintln!("[safe-docker] Non-interactive: proceeding (SAFE_DOCKER_ASK=allow)");
-                let docker_path = match find_real_docker(config) {
-                    Some(p) => p,
-                    None => {
-                        eprintln!("[safe-docker] Error: could not find the real docker binary");
-                        return 1;
+                match find_real_docker_detailed(config) {
+                    Ok(res) => exec_docker(&res.path, docker_args), // never returns
+                    Err(tried) => {
+                        print_docker_not_found(&tried);
+                        1
                     }
-                };
-                exec_docker(&docker_path, docker_args); // never returns
+                }
             }
             NonInteractiveAsk::Deny => {
                 eprintln!(
@@ -198,14 +222,13 @@ fn handle_ask(reason: &str, docker_args: &[String], config: &Config, verbose: bo
         if stdin.lock().read_line(&mut line).is_ok() {
             let answer = line.trim().to_lowercase();
             if answer == "y" || answer == "yes" {
-                let docker_path = match find_real_docker(config) {
-                    Some(p) => p,
-                    None => {
-                        eprintln!("[safe-docker] Error: could not find the real docker binary");
-                        return 1;
+                match find_real_docker_detailed(config) {
+                    Ok(res) => exec_docker(&res.path, docker_args), // never returns
+                    Err(tried) => {
+                        print_docker_not_found(&tried);
+                        1
                     }
-                };
-                exec_docker(&docker_path, docker_args); // never returns
+                }
             } else {
                 if verbose {
                     eprintln!("[safe-docker] Aborted by user");
@@ -219,41 +242,73 @@ fn handle_ask(reason: &str, docker_args: &[String], config: &Config, verbose: bo
     }
 }
 
-/// 本物の docker バイナリを検索する
+/// 本物の docker バイナリを検索する（簡易版）
 ///
 /// 優先順位:
 /// 1. 環境変数 SAFE_DOCKER_DOCKER_PATH
 /// 2. 設定ファイルの wrapper.docker_path
 /// 3. PATH から自動検索（自分自身を除外）
 pub fn find_real_docker(config: &Config) -> Option<PathBuf> {
+    find_real_docker_detailed(config).ok().map(|r| r.path)
+}
+
+/// 本物の docker バイナリを検索する（詳細情報付き）
+///
+/// 成功時は DockerResolution（パスと検索ソース）を返す。
+/// 失敗時は試行した検索手順のリストを返す。
+pub fn find_real_docker_detailed(config: &Config) -> Result<DockerResolution, Vec<String>> {
+    let mut tried = Vec::new();
+
     // 1. 環境変数
     if let Ok(path) = std::env::var("SAFE_DOCKER_DOCKER_PATH")
         && !path.is_empty()
     {
         let p = PathBuf::from(&path);
         if p.exists() {
-            return Some(p);
+            return Ok(DockerResolution {
+                path: p,
+                source: "SAFE_DOCKER_DOCKER_PATH",
+            });
         }
-        log::warn!(
-            "SAFE_DOCKER_DOCKER_PATH={} does not exist, falling back",
-            path
-        );
+        tried.push(format!("SAFE_DOCKER_DOCKER_PATH={} (file not found)", path));
     }
 
     // 2. 設定ファイル
     if !config.wrapper.docker_path.is_empty() {
         let p = PathBuf::from(&config.wrapper.docker_path);
         if p.exists() {
-            return Some(p);
+            return Ok(DockerResolution {
+                path: p,
+                source: "wrapper.docker_path",
+            });
         }
-        log::warn!(
-            "wrapper.docker_path={} does not exist, falling back",
+        tried.push(format!(
+            "wrapper.docker_path={} (file not found)",
             config.wrapper.docker_path
-        );
+        ));
     }
 
     // 3. PATH 自動検索（自分自身を除外）
-    find_docker_in_path()
+    if let Some(p) = find_docker_in_path() {
+        return Ok(DockerResolution {
+            path: p,
+            source: "PATH",
+        });
+    }
+    tried.push("PATH search (no docker binary found)".to_string());
+
+    Err(tried)
+}
+
+/// Docker バイナリが見つからなかった場合の詳細エラーを表示
+fn print_docker_not_found(tried: &[String]) {
+    eprintln!("[safe-docker] Error: could not find the real docker binary");
+    for t in tried {
+        eprintln!("  Tried: {}", t);
+    }
+    eprintln!(
+        "  Tip: Set --docker-path <PATH> or SAFE_DOCKER_DOCKER_PATH to specify the docker binary"
+    );
 }
 
 /// PATH から docker バイナリを検索する（自分自身を除外）
@@ -567,6 +622,61 @@ mod tests {
         // 設定パスが存在しない場合、PATH から探す
         let _result = find_real_docker(&config);
         // PATH に docker があるかは環境次第なので結果のアサートは省略
+    }
+
+    // --- find_real_docker_detailed テスト ---
+
+    #[test]
+    fn test_find_real_docker_detailed_env_var_source() {
+        let config = default_config();
+        // /bin/echo を docker として使う
+        unsafe { std::env::set_var("SAFE_DOCKER_DOCKER_PATH", "/bin/echo") };
+        let result = find_real_docker_detailed(&config);
+        unsafe { std::env::remove_var("SAFE_DOCKER_DOCKER_PATH") };
+        assert!(result.is_ok());
+        let res = result.unwrap();
+        assert_eq!(res.path, PathBuf::from("/bin/echo"));
+        assert_eq!(res.source, "SAFE_DOCKER_DOCKER_PATH");
+    }
+
+    #[test]
+    fn test_find_real_docker_detailed_config_source() {
+        let mut config = default_config();
+        config.wrapper.docker_path = "/bin/echo".to_string();
+        // 環境変数をクリア
+        unsafe { std::env::remove_var("SAFE_DOCKER_DOCKER_PATH") };
+        let result = find_real_docker_detailed(&config);
+        assert!(result.is_ok());
+        let res = result.unwrap();
+        assert_eq!(res.path, PathBuf::from("/bin/echo"));
+        assert_eq!(res.source, "wrapper.docker_path");
+    }
+
+    #[test]
+    fn test_find_real_docker_detailed_not_found() {
+        let mut config = default_config();
+        config.wrapper.docker_path = "/nonexistent/docker_xyz".to_string();
+        unsafe { std::env::set_var("SAFE_DOCKER_DOCKER_PATH", "/nonexistent/docker_abc") };
+        // PATH にも docker がない状態にするのは困難なので、tried の内容をチェック
+        let result = find_real_docker_detailed(&config);
+        unsafe { std::env::remove_var("SAFE_DOCKER_DOCKER_PATH") };
+        if let Err(tried) = result {
+            assert!(
+                tried
+                    .iter()
+                    .any(|t| t.contains("SAFE_DOCKER_DOCKER_PATH=/nonexistent/docker_abc")),
+                "tried should contain env var: {:?}",
+                tried
+            );
+            assert!(
+                tried
+                    .iter()
+                    .any(|t| t.contains("wrapper.docker_path=/nonexistent/docker_xyz")),
+                "tried should contain config path: {:?}",
+                tried
+            );
+        }
+        // PATH に docker がある場合は Ok になるので、そのケースはスキップ
     }
 
     #[test]
