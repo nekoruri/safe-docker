@@ -235,11 +235,20 @@ fn run_hook_mode() {
         .unwrap_or_else(|| ".".to_string());
 
     // 設定ファイル読み込み
-    let config = match config::Config::load() {
-        Ok(config) => config,
+    let cfg_path = config::config_path();
+    let (config, hook_config_source) = match config::Config::load() {
+        Ok(config) => {
+            let source = if cfg_path.exists() {
+                format!("{}", cfg_path.display())
+            } else {
+                "(default)".to_string()
+            };
+            (config, source)
+        }
         Err(e) => {
             log::warn!("Failed to load config, using defaults: {}", e);
-            config::Config::default()
+            let source = format!("{} (FAILED, using defaults)", cfg_path.display());
+            (config::Config::default(), source)
         }
     };
 
@@ -273,6 +282,7 @@ fn run_hook_mode() {
             input.session_id.as_deref(),
             &cwd,
             "hook",
+            Some(&hook_config_source),
         );
         audit::emit(&event, &config.audit);
     }
