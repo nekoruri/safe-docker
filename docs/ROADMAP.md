@@ -108,7 +108,7 @@
 ### ドキュメント
 - [x] is_flag_with_value() リスト更新ガイド
 - [x] 新しい危険フラグ追加時のチェックリスト
-- [ ] OPA Docker AuthZ との統合ガイド
+- [x] OPA Docker AuthZ との統合ガイド
 
 ## 設計メモ
 
