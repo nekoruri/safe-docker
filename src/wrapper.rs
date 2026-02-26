@@ -501,6 +501,10 @@ fn exec_docker(docker_path: &Path, args: &[impl AsRef<std::ffi::OsStr>]) -> ! {
 mod tests {
     use super::*;
     use crate::config::Config;
+    use std::sync::Mutex;
+
+    /// 環境変数 SAFE_DOCKER_DOCKER_PATH を使うテストの直列化用 Mutex
+    static WRAPPER_ENV_MUTEX: Mutex<()> = Mutex::new(());
 
     fn default_config() -> Config {
         Config::default()
@@ -595,13 +599,14 @@ mod tests {
 
     #[test]
     fn test_find_real_docker_env_var() {
+        let _lock = WRAPPER_ENV_MUTEX.lock().unwrap();
         let config = default_config();
         // /usr/bin/docker が存在する場合のテスト
         if Path::new("/usr/bin/docker").exists() {
             unsafe { std::env::set_var("SAFE_DOCKER_DOCKER_PATH", "/usr/bin/docker") };
             let result = find_real_docker(&config);
-            assert_eq!(result, Some(PathBuf::from("/usr/bin/docker")));
             unsafe { std::env::remove_var("SAFE_DOCKER_DOCKER_PATH") };
+            assert_eq!(result, Some(PathBuf::from("/usr/bin/docker")));
         }
     }
 
@@ -629,6 +634,7 @@ mod tests {
 
     #[test]
     fn test_find_real_docker_detailed_env_var_source() {
+        let _lock = WRAPPER_ENV_MUTEX.lock().unwrap();
         let config = default_config();
         // /bin/echo を docker として使う
         unsafe { std::env::set_var("SAFE_DOCKER_DOCKER_PATH", "/bin/echo") };
@@ -642,6 +648,7 @@ mod tests {
 
     #[test]
     fn test_find_real_docker_detailed_config_source() {
+        let _lock = WRAPPER_ENV_MUTEX.lock().unwrap();
         let mut config = default_config();
         config.wrapper.docker_path = "/bin/echo".to_string();
         // 環境変数をクリア
@@ -655,6 +662,7 @@ mod tests {
 
     #[test]
     fn test_find_real_docker_detailed_not_found() {
+        let _lock = WRAPPER_ENV_MUTEX.lock().unwrap();
         let mut config = default_config();
         config.wrapper.docker_path = "/nonexistent/docker_xyz".to_string();
         unsafe { std::env::set_var("SAFE_DOCKER_DOCKER_PATH", "/nonexistent/docker_abc") };

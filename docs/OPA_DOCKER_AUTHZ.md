@@ -209,11 +209,11 @@ deny if {
 
 ### 危険な capability の制限
 
-safe-docker の `blocked_capabilities` に対応:
+safe-docker の `blocked_capabilities` に対応。本リポジトリの `opa/authz.rego` は safe-docker のデフォルトと同じリストを使用している（一貫性検証テスト `tests/opa_consistency_test.rs` で自動チェック）:
 
 ```rego
 # 危険な capability をブロック
-# safe-docker の blocked_capabilities と同じリスト
+# safe-docker の default_blocked_capabilities() と同期すること
 deny if {
     cap := input.Body.HostConfig.CapAdd[_]
     cap in {
@@ -221,12 +221,12 @@ deny if {
         "SYS_PTRACE",
         "SYS_MODULE",
         "SYS_RAWIO",
-        "ALL",
         "DAC_READ_SEARCH",
         "NET_ADMIN",
         "BPF",
         "PERFMON",
-        "SYS_BOOT"
+        "SYS_BOOT",
+        "ALL",
     }
 }
 ```
@@ -236,35 +236,38 @@ deny if {
 safe-docker の `--pid=host`, `--network=host` 等に対応:
 
 ```rego
-# ホストの PID 名前空間へのアクセスをブロック
-deny if {
-    input.Body.HostConfig.PidMode == "host"
-}
+# ホストの名前空間へのアクセスをブロック
+deny if { input.Body.HostConfig.PidMode == "host" }
+deny if { input.Body.HostConfig.NetworkMode == "host" }
+deny if { input.Body.HostConfig.IpcMode == "host" }
+deny if { input.Body.HostConfig.UTSMode == "host" }
+deny if { input.Body.HostConfig.CgroupnsMode == "host" }
+deny if { input.Body.HostConfig.UsernsMode == "host" }
+```
 
-# ホストのネットワーク名前空間へのアクセスをブロック
-deny if {
-    input.Body.HostConfig.NetworkMode == "host"
-}
+### デバイスアクセスのブロック
 
-# ホストの IPC 名前空間へのアクセスをブロック
-deny if {
-    input.Body.HostConfig.IpcMode == "host"
-}
+safe-docker の `--device` 検出に対応:
 
-# ホストの UTS 名前空間へのアクセスをブロック
+```rego
+# デバイスアクセスをブロック
 deny if {
-    input.Body.HostConfig.UTSMode == "host"
+    count(input.Body.HostConfig.Devices) > 0
 }
+```
 
-# ホストの cgroup 名前空間へのアクセスをブロック
-deny if {
-    input.Body.HostConfig.CgroupnsMode == "host"
-}
+### 危険な security-opt のブロック
 
-# ホストの user 名前空間へのアクセスをブロック
-deny if {
-    input.Body.HostConfig.UsernsMode == "host"
-}
+safe-docker の `is_dangerous_security_opt()` に対応:
+
+```rego
+# 危険な security-opt をブロック
+deny if { opt := input.Body.HostConfig.SecurityOpt[_]; contains(opt, "apparmor=unconfined") }
+deny if { opt := input.Body.HostConfig.SecurityOpt[_]; contains(opt, "seccomp=unconfined") }
+deny if { opt := input.Body.HostConfig.SecurityOpt[_]; contains(opt, "label=disable") }
+deny if { opt := input.Body.HostConfig.SecurityOpt[_]; contains(opt, "label:disable") }
+deny if { opt := input.Body.HostConfig.SecurityOpt[_]; contains(opt, "no-new-privileges=false") }
+deny if { opt := input.Body.HostConfig.SecurityOpt[_]; contains(opt, "systempaths=unconfined") }
 ```
 
 ### ポリシーの対応表
@@ -294,35 +297,46 @@ deny if {
 
 ### 1. OPA Docker AuthZ プラグインのインストール
 
-プラグインは Docker のマネージドプラグインとして提供されている。
+プラグインは Docker のマネージドプラグインとして提供されている。`--alias` でローカルな短い名前を付けておくと、以降のコマンドや `daemon.json` での参照が簡潔になる。
 
 ```bash
 # プラグインをインストール（TLS なしのローカル開発環境向け）
-docker plugin install openpolicyagent/opa-docker-authz-v2:0.10 \
+# --alias で短い名前を付与
+docker plugin install --alias opa-docker-authz \
+    openpolicyagent/opa-docker-authz-v2:0.10 \
     opa-args="-policy-file /opa/authz.rego"
 ```
+
+プラグイン内部のパス `/opa/authz.rego` は、プラグインコンテナ内のファイルシステムパスを指す。ポリシーファイルの配置方法は次の手順を参照。
 
 > 詳細なインストール手順（TLS 設定、リモートバンドル等）は [opa-docker-authz の公式ドキュメント](https://github.com/open-policy-agent/opa-docker-authz) を参照。
 
 ### 2. Rego ポリシーファイルの配置
 
-本リポジトリの `opa/authz.rego` をプラグインのポリシーディレクトリにコピーする:
+本リポジトリの `opa/authz.rego` をプラグインが読み込む場所に配置する。マネージドプラグインはプラグインコンテナ内で動作するため、ポリシーファイルはプラグインのルートファイルシステムに配置する必要がある:
 
 ```bash
-# プラグインのポリシーディレクトリにコピー
-# (プラグインの設定によりパスが異なる場合がある)
-sudo cp opa/authz.rego /etc/docker/config/authz.rego
+# プラグインのルートファイルシステムにコピー
+# プラグイン ID は `docker plugin inspect` で確認
+PLUGIN_ID=$(docker plugin inspect -f '{{.Id}}' opa-docker-authz)
+sudo cp opa/authz.rego /var/lib/docker/plugins/${PLUGIN_ID}/rootfs/opa/authz.rego
 ```
 
-必要に応じて `authz.rego` 内のホームディレクトリパス（`/home/username/`）を実際のパスに変更する。
+`authz.rego` 内のホームディレクトリパス（サンプルでは `/home/username/`）を、実際のユーザーのホームディレクトリに変更すること:
+
+```bash
+# 例: ユーザー名が "alice" の場合
+sudo sed -i 's|/home/username/|/home/alice/|g' \
+    /var/lib/docker/plugins/${PLUGIN_ID}/rootfs/opa/authz.rego
+```
 
 ### 3. Docker デーモン設定への追加
 
-`/etc/docker/daemon.json` に authorization-plugins を追加:
+`/etc/docker/daemon.json` に authorization-plugins を追加（`--alias` で付けた名前を使用）:
 
 ```json
 {
-    "authorization-plugins": ["openpolicyagent/opa-docker-authz-v2:0.10"]
+    "authorization-plugins": ["opa-docker-authz"]
 }
 ```
 
@@ -361,8 +375,8 @@ sudo systemctl restart docker
 OPA ポリシーに誤りがあると、全ての Docker 操作が拒否される可能性がある。以下の手順でリカバリする:
 
 ```bash
-# 方法 1: プラグインを無効化
-docker plugin disable openpolicyagent/opa-docker-authz-v2:0.10
+# 方法 1: プラグインを無効化（--alias で付けた名前を使用）
+docker plugin disable opa-docker-authz
 
 # 方法 2: daemon.json から authorization-plugins を削除して Docker 再起動
 sudo vi /etc/docker/daemon.json  # authorization-plugins の行を削除
@@ -437,6 +451,29 @@ safe-docker のポリシーの**大部分**は OPA でも定義可能だが、�
 ## ポリシーの一貫性検証
 
 パターン C（safe-docker + OPA 併用）では、2つのレイヤーのポリシーが一貫していることが重要になる。safe-docker が deny するものを OPA が allow してしまうと、バイパス経路が生まれる。
+
+### 自動検証: 一貫性テスト（推奨）
+
+本リポジトリには `tests/opa_consistency_test.rs` として、safe-docker のデフォルトポリシーと `opa/authz.rego` の一貫性を検証するテストが含まれている。`cargo test` で自動実行される。
+
+```bash
+# 一貫性テストの実行
+cargo test opa_consistency
+```
+
+このテストは以下を検証する:
+
+- `default_blocked_capabilities()` の全 capability が `authz.rego` の CapAdd deny ルールに含まれているか
+- `--privileged` の deny ルールが存在するか
+- 全ての名前空間フラグ（PidMode, NetworkMode, IpcMode, UTSMode, CgroupnsMode, UsernsMode）の deny ルールが存在するか
+- デバイスアクセスの deny ルールが存在するか
+- 全ての危険な security-opt パターンの deny ルールが存在するか
+- Docker ソケットマウントの deny ルールが存在するか
+- バインドマウントのパス制限とパストラバーサル防止が存在するか
+- プラグインのロックアウト防止ルールが存在するか
+- 開発環境固有のパスがハードコードされていないか
+
+safe-docker のポリシーを拡張した場合は、`opa/authz.rego` とこのテストも合わせて更新すること。
 
 ### 手動検証: チェックリスト方式
 
