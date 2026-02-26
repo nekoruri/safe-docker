@@ -199,10 +199,17 @@ impl Config {
     /// パスが allowed_paths に含まれるか判定
     pub fn is_path_allowed(&self, canonical_path: &str) -> bool {
         self.allowed_paths.iter().any(|allowed| {
+            // canonicalize 後のパスでマッチング（シンボリックリンク解決済み）
             let allowed_canonical = std::fs::canonicalize(allowed)
                 .map(|p| p.to_string_lossy().to_string())
                 .unwrap_or_else(|_| allowed.clone());
-            canonical_path.starts_with(&allowed_canonical)
+            if canonical_path.starts_with(&allowed_canonical) {
+                return true;
+            }
+            // macOS では /tmp → /private/tmp 等のシンボリックリンクがあるため、
+            // 入力パスが logical_normalize 由来（canonicalize 失敗）の場合に備え、
+            // 元の allowed_paths 文字列でもフォールバックマッチングを行う
+            canonical_path.starts_with(allowed.as_str())
         })
     }
 
