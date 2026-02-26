@@ -324,6 +324,7 @@ fn generate_tips(reason: &str) -> Vec<String> {
         || reason.contains("--userns=host")
         || reason.contains("--ipc=host")
         || reason.contains("--cgroupns=host")
+        || reason.contains("--uts=host")
     {
         tips.push(
             "Host namespace sharing is blocked by default. Remove the flag from blocked_flags in config.toml to allow"

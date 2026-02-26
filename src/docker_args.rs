@@ -63,6 +63,8 @@ pub enum DangerousFlag {
     UsernsHost,
     CgroupnsHost,
     IpcHost,
+    /// --uts=host (ホスト UTS 名前空間の共有)
+    UtsHost,
     /// --network=container:NAME (コンテナ間ネットワーク共有)
     NetworkContainer(String),
     /// --pid=container:NAME (コンテナ間プロセス名前空間共有)
@@ -86,6 +88,7 @@ impl std::fmt::Display for DangerousFlag {
             DangerousFlag::UsernsHost => write!(f, "--userns=host"),
             DangerousFlag::CgroupnsHost => write!(f, "--cgroupns=host"),
             DangerousFlag::IpcHost => write!(f, "--ipc=host"),
+            DangerousFlag::UtsHost => write!(f, "--uts=host"),
             DangerousFlag::NetworkContainer(name) => {
                 write!(f, "--network=container:{}", name)
             }
@@ -200,6 +203,21 @@ fn parse_mount_flag(value: &str, dangerous_flags: &mut Vec<DangerousFlag>) -> Op
         source: MountSource::MountFlag,
         read_only,
     })
+}
+
+/// --security-opt seccomp=PATH からパスを抽出してホストパス検証対象に追加する
+/// seccomp=unconfined は DangerousFlag で処理済みなのでスキップ
+fn extract_seccomp_path(opt: &str, host_paths: &mut Vec<String>) {
+    // seccomp= または seccomp: のどちらの形式にも対応
+    let path = opt
+        .strip_prefix("seccomp=")
+        .or_else(|| opt.strip_prefix("seccomp:"));
+    if let Some(path) = path
+        && path != "unconfined"
+        && !path.is_empty()
+    {
+        host_paths.push(path.to_string());
+    }
 }
 
 /// docker 引数をパースして DockerCommand を返す
@@ -375,14 +393,18 @@ pub fn parse_docker_args(args: &[&str]) -> DockerCommand {
         // --security-opt
         if arg == "--security-opt" {
             if i + 1 < args.len() {
+                let opt_value = args[i + 1];
                 cmd.dangerous_flags
-                    .push(DangerousFlag::SecurityOpt(args[i + 1].to_string()));
+                    .push(DangerousFlag::SecurityOpt(opt_value.to_string()));
+                // seccomp=PATH (unconfined 以外のパスを検証)
+                extract_seccomp_path(opt_value, &mut cmd.host_paths);
                 i += 2;
                 continue;
             }
         } else if let Some(value) = arg.strip_prefix("--security-opt=") {
             cmd.dangerous_flags
                 .push(DangerousFlag::SecurityOpt(value.to_string()));
+            extract_seccomp_path(value, &mut cmd.host_paths);
             i += 1;
             continue;
         }
@@ -514,6 +536,49 @@ pub fn parse_docker_args(args: &[&str]) -> DockerCommand {
                 cmd.dangerous_flags
                     .push(DangerousFlag::IpcContainer(name.to_string()));
             }
+            i += 1;
+            continue;
+        }
+
+        // --uts
+        if arg == "--uts" {
+            if i + 1 < args.len() {
+                if args[i + 1] == "host" {
+                    cmd.dangerous_flags.push(DangerousFlag::UtsHost);
+                }
+                i += 2;
+                continue;
+            }
+        } else if let Some(val) = arg.strip_prefix("--uts=") {
+            if val == "host" {
+                cmd.dangerous_flags.push(DangerousFlag::UtsHost);
+            }
+            i += 1;
+            continue;
+        }
+
+        // --env-file (ホストファイル読み取り → パス検証)
+        if arg == "--env-file" {
+            if i + 1 < args.len() {
+                cmd.host_paths.push(args[i + 1].to_string());
+                i += 2;
+                continue;
+            }
+        } else if let Some(value) = arg.strip_prefix("--env-file=") {
+            cmd.host_paths.push(value.to_string());
+            i += 1;
+            continue;
+        }
+
+        // --label-file (ホストファイル読み取り → パス検証)
+        if arg == "--label-file" {
+            if i + 1 < args.len() {
+                cmd.host_paths.push(args[i + 1].to_string());
+                i += 2;
+                continue;
+            }
+        } else if let Some(value) = arg.strip_prefix("--label-file=") {
+            cmd.host_paths.push(value.to_string());
             i += 1;
             continue;
         }
@@ -766,6 +831,8 @@ fn is_flag_with_value(arg: &str) -> bool {
             | "--cgroupns"
             | "--ipc"
             | "--userns"
+            | "--uts"
+            | "--pid"
             | "--volumes-from"
             | "--runtime"
             | "--cgroup-parent"
@@ -779,6 +846,33 @@ fn is_flag_with_value(arg: &str) -> bool {
             | "-a"
             | "--link"
             | "--volume-driver"
+            | "--env-file"
+            | "--label-file"
+            | "--device-cgroup-rule"
+            | "--device-read-bps"
+            | "--device-write-bps"
+            | "--device-read-iops"
+            | "--device-write-iops"
+            | "--blkio-weight"
+            | "--blkio-weight-device"
+            | "-c"
+            | "--cpu-shares"
+            | "--cpuset-cpus"
+            | "--cpuset-mems"
+            | "--cpu-period"
+            | "--cpu-quota"
+            | "--memory-swap"
+            | "--memory-swappiness"
+            | "--memory-reservation"
+            | "--kernel-memory"
+            | "--pids-limit"
+            | "--group-add"
+            | "--domainname"
+            | "--oom-score-adj"
+            | "--isolation"
+            | "--ip6"
+            | "--dns-search"
+            | "--dns-option"
     )
 }
 
@@ -1390,5 +1484,169 @@ mod tests {
                 .iter()
                 .any(|f| matches!(f, DangerousFlag::MountPropagation(_)))
         );
+    }
+
+    // --- Phase 5a: --uts=host ---
+
+    #[test]
+    fn test_parse_uts_host_equals() {
+        let args = vec!["run", "--uts=host", "ubuntu"];
+        let cmd = parse_docker_args(&args);
+        assert!(cmd.dangerous_flags.contains(&DangerousFlag::UtsHost));
+    }
+
+    #[test]
+    fn test_parse_uts_host_space() {
+        let args = vec!["run", "--uts", "host", "ubuntu"];
+        let cmd = parse_docker_args(&args);
+        assert!(cmd.dangerous_flags.contains(&DangerousFlag::UtsHost));
+    }
+
+    #[test]
+    fn test_parse_uts_non_host_no_flag() {
+        let args = vec!["run", "--uts=private", "ubuntu"];
+        let cmd = parse_docker_args(&args);
+        assert!(!cmd.dangerous_flags.contains(&DangerousFlag::UtsHost));
+    }
+
+    #[test]
+    fn test_parse_uts_space_consumes_value() {
+        // --uts の値がイメージ名として誤認されないこと
+        let args = vec!["run", "--uts", "private", "ubuntu"];
+        let cmd = parse_docker_args(&args);
+        assert_eq!(cmd.image, Some("ubuntu".to_string()));
+        assert!(!cmd.dangerous_flags.contains(&DangerousFlag::UtsHost));
+    }
+
+    // --- Phase 5a: is_flag_with_value 補完 ---
+
+    #[test]
+    fn test_is_flag_with_value_new_flags() {
+        assert!(is_flag_with_value("--env-file"));
+        assert!(is_flag_with_value("--label-file"));
+        assert!(is_flag_with_value("--uts"));
+        assert!(is_flag_with_value("--pid"));
+        assert!(is_flag_with_value("--device-read-bps"));
+        assert!(is_flag_with_value("--device-write-bps"));
+        assert!(is_flag_with_value("--cpu-shares"));
+        assert!(is_flag_with_value("-c"));
+        assert!(is_flag_with_value("--pids-limit"));
+        assert!(is_flag_with_value("--memory-swap"));
+        assert!(is_flag_with_value("--group-add"));
+        assert!(is_flag_with_value("--dns-search"));
+    }
+
+    #[test]
+    fn test_env_file_not_eaten_as_image() {
+        // --env-file の値がイメージ名として誤認されないこと
+        let args = vec![
+            "run",
+            "--env-file",
+            "/home/user/.env",
+            "--privileged",
+            "ubuntu",
+        ];
+        let cmd = parse_docker_args(&args);
+        assert_eq!(cmd.image, Some("ubuntu".to_string()));
+        assert!(cmd.dangerous_flags.contains(&DangerousFlag::Privileged));
+    }
+
+    #[test]
+    fn test_pids_limit_not_eaten_as_image() {
+        // --pids-limit の値がイメージ名として誤認されないこと
+        let args = vec!["run", "--pids-limit", "100", "--privileged", "ubuntu"];
+        let cmd = parse_docker_args(&args);
+        assert_eq!(cmd.image, Some("ubuntu".to_string()));
+        assert!(cmd.dangerous_flags.contains(&DangerousFlag::Privileged));
+    }
+
+    // --- Phase 5b: --env-file / --label-file パス検証 ---
+
+    #[test]
+    fn test_parse_env_file_space() {
+        let args = vec!["run", "--env-file", "/etc/secrets.env", "ubuntu"];
+        let cmd = parse_docker_args(&args);
+        assert!(cmd.host_paths.contains(&"/etc/secrets.env".to_string()));
+    }
+
+    #[test]
+    fn test_parse_env_file_equals() {
+        let args = vec!["run", "--env-file=/etc/secrets.env", "ubuntu"];
+        let cmd = parse_docker_args(&args);
+        assert!(cmd.host_paths.contains(&"/etc/secrets.env".to_string()));
+    }
+
+    #[test]
+    fn test_parse_label_file_space() {
+        let args = vec!["run", "--label-file", "/etc/labels", "ubuntu"];
+        let cmd = parse_docker_args(&args);
+        assert!(cmd.host_paths.contains(&"/etc/labels".to_string()));
+    }
+
+    #[test]
+    fn test_parse_label_file_equals() {
+        let args = vec!["run", "--label-file=/etc/labels", "ubuntu"];
+        let cmd = parse_docker_args(&args);
+        assert!(cmd.host_paths.contains(&"/etc/labels".to_string()));
+    }
+
+    // --- Phase 5b: --security-opt seccomp=PATH パス検証 ---
+
+    #[test]
+    fn test_parse_seccomp_profile_path() {
+        let args = vec![
+            "run",
+            "--security-opt",
+            "seccomp=/etc/docker/seccomp.json",
+            "ubuntu",
+        ];
+        let cmd = parse_docker_args(&args);
+        assert!(
+            cmd.host_paths
+                .contains(&"/etc/docker/seccomp.json".to_string())
+        );
+        // SecurityOpt としても記録される
+        assert!(
+            cmd.dangerous_flags
+                .iter()
+                .any(|f| matches!(f, DangerousFlag::SecurityOpt(_)))
+        );
+    }
+
+    #[test]
+    fn test_parse_seccomp_profile_path_equals() {
+        let args = vec![
+            "run",
+            "--security-opt=seccomp=/opt/profiles/sec.json",
+            "ubuntu",
+        ];
+        let cmd = parse_docker_args(&args);
+        assert!(
+            cmd.host_paths
+                .contains(&"/opt/profiles/sec.json".to_string())
+        );
+    }
+
+    #[test]
+    fn test_parse_seccomp_profile_path_colon() {
+        let args = vec!["run", "--security-opt", "seccomp:/opt/sec.json", "ubuntu"];
+        let cmd = parse_docker_args(&args);
+        assert!(cmd.host_paths.contains(&"/opt/sec.json".to_string()));
+    }
+
+    #[test]
+    fn test_parse_seccomp_unconfined_no_path() {
+        let args = vec!["run", "--security-opt", "seccomp=unconfined", "ubuntu"];
+        let cmd = parse_docker_args(&args);
+        // unconfined はパスとして扱わない
+        assert!(cmd.host_paths.is_empty());
+    }
+
+    #[test]
+    fn test_parse_apparmor_opt_no_path() {
+        let args = vec!["run", "--security-opt", "apparmor=unconfined", "ubuntu"];
+        let cmd = parse_docker_args(&args);
+        // apparmor は seccomp パス検出の対象外
+        assert!(cmd.host_paths.is_empty());
     }
 }

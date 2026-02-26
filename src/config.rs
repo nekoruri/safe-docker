@@ -118,6 +118,11 @@ fn default_blocked_capabilities() -> Vec<String> {
         "SYS_PTRACE".to_string(),
         "SYS_MODULE".to_string(),
         "SYS_RAWIO".to_string(),
+        "DAC_READ_SEARCH".to_string(),
+        "NET_ADMIN".to_string(),
+        "BPF".to_string(),
+        "PERFMON".to_string(),
+        "SYS_BOOT".to_string(),
         "ALL".to_string(),
     ]
 }
@@ -395,7 +400,12 @@ mod tests {
         assert!(config.is_capability_blocked("SYS_ADMIN"));
         assert!(config.is_capability_blocked("sys_admin"));
         assert!(config.is_capability_blocked("ALL"));
-        assert!(!config.is_capability_blocked("NET_ADMIN"));
+        assert!(config.is_capability_blocked("NET_ADMIN"));
+        assert!(config.is_capability_blocked("DAC_READ_SEARCH"));
+        assert!(config.is_capability_blocked("BPF"));
+        assert!(config.is_capability_blocked("PERFMON"));
+        assert!(config.is_capability_blocked("SYS_BOOT"));
+        assert!(!config.is_capability_blocked("NET_RAW"));
     }
 
     #[test]
