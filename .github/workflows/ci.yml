@@ -71,11 +71,11 @@ jobs:
       - run: cargo bench --no-run
 
   msrv:
-    name: MSRV (Rust 1.87)
+    name: MSRV (Rust 1.88)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@1.87
+      - uses: dtolnay/rust-toolchain@1.88
       - uses: Swatinem/rust-cache@v2
         with:
           key: msrv
