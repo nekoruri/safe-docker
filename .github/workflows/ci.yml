@@ -18,6 +18,8 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: cargo test
 
   test-otlp:
@@ -29,6 +31,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: otlp
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: cargo test --features otlp
 
   clippy:
@@ -40,6 +43,8 @@ jobs:
         with:
           components: clippy
       - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: cargo clippy -- -D warnings
       - run: cargo clippy --features otlp -- -D warnings
 
@@ -62,4 +67,18 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: bench
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: cargo bench --no-run
+
+  msrv:
+    name: MSRV (Rust 1.85)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.85
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: msrv
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - run: cargo check
+      - run: cargo check --features otlp

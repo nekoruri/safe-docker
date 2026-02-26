@@ -97,10 +97,12 @@
 - [ ] crates.io への公開（`cargo install safe-docker`）
 - [ ] シンボリックリンク setup ヘルパーコマンド
 
-### テスト
+### テスト・CI
 - [ ] 多環境 smoke テスト（Linux glibc/musl, macOS Intel/Apple Silicon）
 - [ ] 複数 Docker デーモン環境テスト（colima, orbstack）
-- [ ] 大規模 compose ファイル（1000行超）のパフォーマンステスト
+- [x] 大規模 compose ファイル（1000行超）のパフォーマンステスト
+- [x] MSRV (Minimum Supported Rust Version) CI チェック（Rust 1.85）
+- [x] CI キャッシュ最適化（PR ビルドでのキャッシュ保存抑制）
 
 ### ドキュメント
 - [ ] is_flag_with_value() リスト更新ガイド
