@@ -7,6 +7,8 @@ pub mod hook;
 pub mod path_validator;
 pub mod policy;
 pub mod shell;
+#[cfg(test)]
+pub mod test_utils;
 pub mod wrapper;
 
 use config::ConfigIssue;

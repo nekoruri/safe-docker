@@ -58,13 +58,15 @@ src/
 ├── compose.rs         # docker-compose.yml の解析（volumes、危険設定）※両モード共通
 ├── config.rs          # TOML 設定ファイルの読み込み（[wrapper] セクション含む）
 ├── audit.rs           # 監査ログ（JSONL / OTLP）※両モード共通、mode フィールドで区別
-└── error.rs           # エラー型定義
+├── error.rs           # エラー型定義
+└── test_utils.rs      # テスト用ユーティリティ（TempEnvVar, ENV_MUTEX）※#[cfg(test)]
 
 tests/
-├── integration_test.rs  # Hook モードの E2E テスト（stdin/stdout）
-├── wrapper_test.rs      # Wrapper モードの E2E テスト（/bin/echo をモック docker として使用）
-├── security_test.rs     # セキュリティバイパス検出テスト
-└── proptest_test.rs     # ランダム入力によるクラッシュ耐性テスト
+├── integration_test.rs    # Hook モードの E2E テスト（stdin/stdout）
+├── wrapper_test.rs        # Wrapper モードの E2E テスト（/bin/echo をモック docker として使用）
+├── security_test.rs       # セキュリティバイパス検出テスト
+├── proptest_test.rs       # ランダム入力によるクラッシュ耐性テスト
+└── opa_consistency_test.rs  # OPA authz.rego と safe-docker デフォルトの一貫性検証
 
 benches/
 └── benchmark.rs         # criterion ベンチマーク
@@ -130,3 +132,9 @@ OS 引数 → wrapper::run()
 - **統合テスト**: `tests/integration_test.rs` — バイナリを実際に起動して stdin/stdout で検証
 - **セキュリティテスト**: `tests/security_test.rs` — バイパスパターンの検出を検証
 - **DockerCommand 構造体**: テストで構築する際は `host_paths: vec![]` を忘れずに
+- **環境変数を操作するテスト**: `test_utils::TempEnvVar` と `ENV_MUTEX` を使うこと。`unsafe { std::env::set_var() }` を直接呼ばない
+  ```rust
+  use crate::test_utils::{TempEnvVar, ENV_MUTEX};
+  let _lock = ENV_MUTEX.lock().unwrap();
+  let _env = TempEnvVar::set("MY_VAR", "value");  // Drop 時に自動復元
+  ```

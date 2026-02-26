@@ -349,16 +349,12 @@ mod tests {
     use crate::docker_args::{
         BindMount, DangerousFlag, DockerCommand, DockerSubcommand, MountSource,
     };
-    use std::sync::Mutex;
-
-    /// SAFE_DOCKER_AUDIT 環境変数を操作するテスト間の競合を防ぐ
-    static AUDIT_ENV_MUTEX: Mutex<()> = Mutex::new(());
+    use crate::test_utils::{ENV_MUTEX, TempEnvVar};
 
     #[test]
     fn test_is_enabled_config() {
-        let _lock = AUDIT_ENV_MUTEX.lock().unwrap();
-        // SAFETY: Mutex で直列化済み
-        unsafe { std::env::remove_var("SAFE_DOCKER_AUDIT") };
+        let _lock = ENV_MUTEX.lock().unwrap();
+        let _env = TempEnvVar::remove("SAFE_DOCKER_AUDIT");
 
         let mut config = AuditConfig::default();
         assert!(!is_enabled(&config));
@@ -369,22 +365,20 @@ mod tests {
 
     #[test]
     fn test_is_enabled_env_var() {
-        let _lock = AUDIT_ENV_MUTEX.lock().unwrap();
+        let _lock = ENV_MUTEX.lock().unwrap();
+        let _env = TempEnvVar::set("SAFE_DOCKER_AUDIT", "1");
+
         let config = AuditConfig::default();
-        // SAFETY: Mutex で直列化済み
-        unsafe { std::env::set_var("SAFE_DOCKER_AUDIT", "1") };
         assert!(is_enabled(&config));
-        unsafe { std::env::remove_var("SAFE_DOCKER_AUDIT") };
     }
 
     #[test]
     fn test_is_enabled_env_var_not_one() {
-        let _lock = AUDIT_ENV_MUTEX.lock().unwrap();
+        let _lock = ENV_MUTEX.lock().unwrap();
+        let _env = TempEnvVar::set("SAFE_DOCKER_AUDIT", "0");
+
         let config = AuditConfig::default();
-        // SAFETY: Mutex で直列化済み
-        unsafe { std::env::set_var("SAFE_DOCKER_AUDIT", "0") };
         assert!(!is_enabled(&config));
-        unsafe { std::env::remove_var("SAFE_DOCKER_AUDIT") };
     }
 
     #[test]
