@@ -281,9 +281,15 @@ fn test_wrapper_deny_multiple_violations() {
 
 #[test]
 fn test_wrapper_custom_docker_path() {
-    // /bin/true をモック docker として使用 → 成功するが出力は空
+    // `true` コマンドをモック docker として使用 → 成功するが出力は空
+    // macOS では /usr/bin/true、Linux では /bin/true にあるため動的に解決
+    let true_path = if std::path::Path::new("/usr/bin/true").exists() {
+        "/usr/bin/true"
+    } else {
+        "/bin/true"
+    };
     let (stdout, _stderr, exit_code) =
-        run_wrapper_with_env(&["ps"], &[("SAFE_DOCKER_DOCKER_PATH", "/bin/true")]);
+        run_wrapper_with_env(&["ps"], &[("SAFE_DOCKER_DOCKER_PATH", true_path)]);
     assert_eq!(exit_code, 0);
     assert!(stdout.trim().is_empty());
 }
@@ -1165,16 +1171,15 @@ fn test_check_config_shows_docker_not_found() {
 #[test]
 fn test_wrapper_config_parse_failure_warning() {
     let dir = tempfile::tempdir().unwrap();
-    let config_path = dir.path().join("safe-docker").join("config.toml");
-    std::fs::create_dir_all(config_path.parent().unwrap()).unwrap();
+    let config_path = dir.path().join("config.toml");
     // 不正な TOML を書き込む
     std::fs::write(&config_path, "{{invalid toml content").unwrap();
 
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_safe-docker"));
     cmd.args(["--dry-run", "ps"]);
     cmd.env("SAFE_DOCKER_DOCKER_PATH", "/bin/echo");
-    // XDG_CONFIG_HOME を一時ディレクトリに設定して config パスを上書き
-    cmd.env("XDG_CONFIG_HOME", dir.path());
+    // SAFE_DOCKER_CONFIG で直接設定ファイルパスを指定（macOS でも動作）
+    cmd.env("SAFE_DOCKER_CONFIG", &config_path);
     cmd.env_remove("SAFE_DOCKER_ACTIVE");
     cmd.env_remove("SAFE_DOCKER_BYPASS");
     let output = cmd

@@ -84,8 +84,12 @@ fn default_config_path() -> PathBuf {
         .join("config.toml")
 }
 
-/// 設定ファイルのデフォルトパスを返す（外部から参照可能）
+/// 設定ファイルのパスを返す（外部から参照可能）。
+/// `SAFE_DOCKER_CONFIG` 環境変数が設定されている場合はそのパスを使用する。
 pub fn config_path() -> PathBuf {
+    if let Ok(path) = std::env::var("SAFE_DOCKER_CONFIG") {
+        return PathBuf::from(path);
+    }
     default_config_path()
 }
 
@@ -179,8 +183,9 @@ impl Default for Config {
 
 impl Config {
     /// 設定ファイルを読み込む。ファイルが存在しない場合はデフォルト値を返す。
+    /// `SAFE_DOCKER_CONFIG` 環境変数が設定されている場合はそのパスを使用する。
     pub fn load() -> Result<Self> {
-        let path = default_config_path();
+        let path = config_path();
         Self::load_from(&path)
     }
 
