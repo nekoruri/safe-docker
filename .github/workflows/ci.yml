@@ -34,6 +34,34 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: cargo test --features otlp
 
+  test-macos:
+    name: Test (macOS)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: macos
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - run: cargo test
+
+  test-musl:
+    name: Test (Linux musl)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-musl
+      - name: Install musl-tools
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: musl
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - run: cargo test --target x86_64-unknown-linux-musl
+
   clippy:
     name: Clippy
     runs-on: ubuntu-latest

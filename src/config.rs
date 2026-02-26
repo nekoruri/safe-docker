@@ -84,8 +84,12 @@ fn default_config_path() -> PathBuf {
         .join("config.toml")
 }
 
-/// 設定ファイルのデフォルトパスを返す（外部から参照可能）
+/// 設定ファイルのパスを返す（外部から参照可能）。
+/// `SAFE_DOCKER_CONFIG` 環境変数が設定されている場合はそのパスを使用する。
 pub fn config_path() -> PathBuf {
+    if let Ok(path) = std::env::var("SAFE_DOCKER_CONFIG") {
+        return PathBuf::from(path);
+    }
     default_config_path()
 }
 
@@ -179,8 +183,9 @@ impl Default for Config {
 
 impl Config {
     /// 設定ファイルを読み込む。ファイルが存在しない場合はデフォルト値を返す。
+    /// `SAFE_DOCKER_CONFIG` 環境変数が設定されている場合はそのパスを使用する。
     pub fn load() -> Result<Self> {
-        let path = default_config_path();
+        let path = config_path();
         Self::load_from(&path)
     }
 
@@ -199,10 +204,17 @@ impl Config {
     /// パスが allowed_paths に含まれるか判定
     pub fn is_path_allowed(&self, canonical_path: &str) -> bool {
         self.allowed_paths.iter().any(|allowed| {
+            // canonicalize 後のパスでマッチング（シンボリックリンク解決済み）
             let allowed_canonical = std::fs::canonicalize(allowed)
                 .map(|p| p.to_string_lossy().to_string())
                 .unwrap_or_else(|_| allowed.clone());
-            canonical_path.starts_with(&allowed_canonical)
+            if canonical_path.starts_with(&allowed_canonical) {
+                return true;
+            }
+            // macOS では /tmp → /private/tmp 等のシンボリックリンクがあるため、
+            // 入力パスが logical_normalize 由来（canonicalize 失敗）の場合に備え、
+            // 元の allowed_paths 文字列でもフォールバックマッチングを行う
+            canonical_path.starts_with(allowed.as_str())
         })
     }
 

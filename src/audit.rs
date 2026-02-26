@@ -352,6 +352,11 @@ mod tests {
 
     #[test]
     fn test_is_enabled_config() {
+        // 他のテスト（test_is_enabled_env_var）が SAFE_DOCKER_AUDIT を設定する
+        // 可能性があるため、このテストでは環境変数をクリアしてからチェックする
+        // SAFETY: テスト実行時のみ使用。並行テストでの競合リスクは許容。
+        unsafe { std::env::remove_var("SAFE_DOCKER_AUDIT") };
+
         let mut config = AuditConfig::default();
         assert!(!is_enabled(&config));
 
