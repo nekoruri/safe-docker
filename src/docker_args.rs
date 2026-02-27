@@ -79,6 +79,8 @@ pub enum DangerousFlag {
     AddHost(String),
     /// --build-arg KEY=VALUE where KEY looks like a secret
     BuildArgSecret(String),
+    /// --cgroup-parent VALUE (カスタム cgroup 親の指定)
+    CgroupParent(String),
 }
 
 impl std::fmt::Display for DangerousFlag {
@@ -106,6 +108,7 @@ impl std::fmt::Display for DangerousFlag {
             DangerousFlag::Sysctl(val) => write!(f, "--sysctl {}", val),
             DangerousFlag::AddHost(val) => write!(f, "--add-host {}", val),
             DangerousFlag::BuildArgSecret(val) => write!(f, "--build-arg {}", val),
+            DangerousFlag::CgroupParent(val) => write!(f, "--cgroup-parent={}", val),
         }
     }
 }
@@ -553,6 +556,21 @@ pub fn parse_docker_args(args: &[&str]) -> DockerCommand {
             }
         } else if arg == "--cgroupns=host" {
             cmd.dangerous_flags.push(DangerousFlag::CgroupnsHost);
+            i += 1;
+            continue;
+        }
+
+        // --cgroup-parent
+        if arg == "--cgroup-parent" {
+            if i + 1 < args.len() {
+                cmd.dangerous_flags
+                    .push(DangerousFlag::CgroupParent(args[i + 1].to_string()));
+                i += 2;
+                continue;
+            }
+        } else if let Some(val) = arg.strip_prefix("--cgroup-parent=") {
+            cmd.dangerous_flags
+                .push(DangerousFlag::CgroupParent(val.to_string()));
             i += 1;
             continue;
         }

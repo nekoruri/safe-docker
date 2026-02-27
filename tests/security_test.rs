@@ -1197,3 +1197,73 @@ fn test_deny_compose_volume_propagation_long_syntax() {
         "compose volume with bind.propagation: rshared should deny",
     );
 }
+
+// --- Compose volumes_from / cgroup_parent E2E テスト ---
+
+#[test]
+fn test_ask_compose_volumes_from() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("compose.yml"),
+        "services:\n  web:\n    image: ubuntu\n    volumes_from:\n      - db\n",
+    )
+    .unwrap();
+
+    let input = serde_json::json!({
+        "session_id": "test-session",
+        "hook_event_name": "PreToolUse",
+        "tool_name": "Bash",
+        "tool_input": {
+            "command": "docker compose up",
+            "description": "test"
+        },
+        "cwd": dir.path().to_str().unwrap()
+    })
+    .to_string();
+
+    let (stdout, exit_code) = run_hook(&input);
+    assert_eq!(exit_code, 0);
+    assert_ask(&stdout, "compose volumes_from should ask");
+}
+
+#[test]
+fn test_ask_compose_cgroup_parent() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("compose.yml"),
+        "services:\n  web:\n    image: ubuntu\n    cgroup_parent: /custom-cgroup\n",
+    )
+    .unwrap();
+
+    let input = serde_json::json!({
+        "session_id": "test-session",
+        "hook_event_name": "PreToolUse",
+        "tool_name": "Bash",
+        "tool_input": {
+            "command": "docker compose up",
+            "description": "test"
+        },
+        "cwd": dir.path().to_str().unwrap()
+    })
+    .to_string();
+
+    let (stdout, exit_code) = run_hook(&input);
+    assert_eq!(exit_code, 0);
+    assert_ask(&stdout, "compose cgroup_parent should ask");
+}
+
+#[test]
+fn test_ask_cgroup_parent_cli() {
+    let input = make_bash_input("docker run --cgroup-parent=/custom-cgroup ubuntu");
+    let (stdout, exit_code) = run_hook(&input);
+    assert_eq!(exit_code, 0);
+    assert_ask(&stdout, "--cgroup-parent should ask");
+}
+
+#[test]
+fn test_ask_cgroup_parent_cli_space() {
+    let input = make_bash_input("docker run --cgroup-parent /custom-cgroup ubuntu");
+    let (stdout, exit_code) = run_hook(&input);
+    assert_eq!(exit_code, 0);
+    assert_ask(&stdout, "--cgroup-parent (space) should ask");
+}
