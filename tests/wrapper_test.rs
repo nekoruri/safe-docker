@@ -1212,31 +1212,13 @@ fn test_wrapper_config_parse_failure_warning() {
 
 // --- Phase 5b: Compose env_file ---
 
-/// 環境変数付きで CWD を指定してラッパーモードを実行
 /// 設定ファイル指定付きでラッパーモードを実行
-fn run_wrapper_with_config(args: &[&str], config_path: &str) -> (String, String, i32) {
-    let mut cmd = Command::new(env!("CARGO_BIN_EXE_safe-docker"));
-    for arg in args {
-        cmd.arg(arg);
-    }
-    cmd.env("SAFE_DOCKER_DOCKER_PATH", "/bin/echo");
-    cmd.env_remove("SAFE_DOCKER_ACTIVE");
-    cmd.env_remove("SAFE_DOCKER_BYPASS");
-    cmd.env_remove("SAFE_DOCKER_ASK");
-    cmd.env("SAFE_DOCKER_CONFIG", config_path);
-    let output = cmd
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .output()
-        .expect("Failed to spawn safe-docker");
-
-    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-    let exit_code = output.status.code().unwrap_or(-1);
-    (stdout, stderr, exit_code)
+fn run_wrapper_with_config(args: &[&str], config_path: &std::path::Path) -> (String, String, i32) {
+    let config_str = config_path.to_string_lossy();
+    run_wrapper_with_env(args, &[("SAFE_DOCKER_CONFIG", &config_str)])
 }
 
+/// CWD を指定してラッパーモードを実行
 fn run_wrapper_in_dir(args: &[&str], cwd: &std::path::Path) -> (String, String, i32) {
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_safe-docker"));
     for arg in args {
@@ -1315,10 +1297,8 @@ non_interactive_ask = "allow"
     .unwrap();
 
     let mount_arg = format!("{}/.ssh:/keys", home_dir());
-    let (stdout, stderr, exit_code) = run_wrapper_with_config(
-        &["run", "-v", &mount_arg, "ubuntu"],
-        config_path.to_str().unwrap(),
-    );
+    let (stdout, stderr, exit_code) =
+        run_wrapper_with_config(&["run", "-v", &mount_arg, "ubuntu"], &config_path);
     assert_eq!(
         exit_code, 0,
         "config non_interactive_ask=allow should proceed, stderr: {}",
@@ -1351,10 +1331,8 @@ non_interactive_ask = "deny"
     .unwrap();
 
     let mount_arg = format!("{}/.ssh:/keys", home_dir());
-    let (_, stderr, exit_code) = run_wrapper_with_config(
-        &["run", "-v", &mount_arg, "ubuntu"],
-        config_path.to_str().unwrap(),
-    );
+    let (_, stderr, exit_code) =
+        run_wrapper_with_config(&["run", "-v", &mount_arg, "ubuntu"], &config_path);
     assert_eq!(
         exit_code, 1,
         "config non_interactive_ask=deny should block, stderr: {}",
@@ -1382,22 +1360,14 @@ non_interactive_ask = "deny"
     .unwrap();
 
     let mount_arg = format!("{}/.ssh:/keys", home_dir());
-    let mut cmd = Command::new(env!("CARGO_BIN_EXE_safe-docker"));
-    cmd.args(["run", "-v", &mount_arg, "ubuntu"]);
-    cmd.env("SAFE_DOCKER_DOCKER_PATH", "/bin/echo");
-    cmd.env_remove("SAFE_DOCKER_ACTIVE");
-    cmd.env_remove("SAFE_DOCKER_BYPASS");
-    cmd.env("SAFE_DOCKER_ASK", "allow");
-    cmd.env("SAFE_DOCKER_CONFIG", config_path.to_str().unwrap());
-    let output = cmd
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .output()
-        .expect("Failed to spawn safe-docker");
-
-    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-    let exit_code = output.status.code().unwrap_or(-1);
+    let config_str = config_path.to_string_lossy();
+    let (_, stderr, exit_code) = run_wrapper_with_env(
+        &["run", "-v", &mount_arg, "ubuntu"],
+        &[
+            ("SAFE_DOCKER_ASK", "allow"),
+            ("SAFE_DOCKER_CONFIG", &config_str),
+        ],
+    );
     assert_eq!(
         exit_code, 0,
         "SAFE_DOCKER_ASK=allow should override config deny, stderr: {}",
@@ -1413,8 +1383,13 @@ non_interactive_ask = "deny"
 #[test]
 fn test_wrapper_non_interactive_default_is_deny() {
     // SAFE_DOCKER_ASK 未設定、config にも non_interactive_ask なし → デフォルト deny
+    // 空の config を明示的に指定して環境からの SAFE_DOCKER_CONFIG 継承を防ぐ
+    let dir = tempfile::tempdir().unwrap();
+    let config_path = dir.path().join("empty.toml");
+    std::fs::write(&config_path, "").unwrap();
     let mount_arg = format!("{}/.ssh:/keys", home_dir());
-    let (_, stderr, exit_code) = run_wrapper(&["run", "-v", &mount_arg, "ubuntu"]);
+    let (_, stderr, exit_code) =
+        run_wrapper_with_config(&["run", "-v", &mount_arg, "ubuntu"], &config_path);
     assert_eq!(
         exit_code, 1,
         "Default non-interactive should deny, stderr: {}",
