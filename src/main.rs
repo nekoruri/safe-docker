@@ -6,6 +6,7 @@ pub mod error;
 pub mod hook;
 pub mod path_validator;
 pub mod policy;
+pub mod setup;
 pub mod shell;
 #[cfg(test)]
 pub mod test_utils;
@@ -22,6 +23,11 @@ fn main() {
     // --check-config サブコマンド
     if args.iter().any(|a| a == "--check-config") {
         std::process::exit(run_check_config(&args));
+    }
+
+    // setup サブコマンド（argv[0] が docker でない場合のみ）
+    if args.len() >= 2 && args[1] == "setup" && !is_transparent_wrapper(&args) {
+        std::process::exit(setup::run(&args[1..]));
     }
 
     // --help / --version (ラッパーモード固有)
@@ -121,6 +127,16 @@ fn detect_mode(args: &[String]) -> RunMode {
     RunMode::Hook
 }
 
+/// argv[0] が "docker" / "docker-compose" で透過ラッパーとして動作しているか判定
+fn is_transparent_wrapper(args: &[String]) -> bool {
+    let argv0 = args
+        .first()
+        .and_then(|a| std::path::Path::new(a).file_name())
+        .and_then(|n| n.to_str())
+        .unwrap_or("");
+    argv0 == "docker" || argv0 == "docker-compose"
+}
+
 /// docker 自体の --help を要求しているか判定
 /// (safe-docker run --help のような場合は docker の help)
 fn is_docker_help_request(args: &[String]) -> bool {
@@ -141,6 +157,7 @@ fn print_help() {
     eprintln!();
     eprintln!("USAGE:");
     eprintln!("  safe-docker [OPTIONS] <docker-args>...     Wrapper mode");
+    eprintln!("  safe-docker setup [--target DIR] [--force] Set up docker symlink");
     eprintln!("  safe-docker --check-config [--config PATH] Check configuration");
     eprintln!("  echo '{{...}}' | safe-docker                 Hook mode (Claude Code)");
     eprintln!();
