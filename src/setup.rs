@@ -126,10 +126,14 @@ pub fn run(args: &[String]) -> i32 {
 
     // --target DIR（値必須のバリデーション）
     let has_target_flag = args.iter().any(|a| a == "--target");
-    let target_from_args = args
-        .windows(2)
-        .find(|w| w[0] == "--target")
-        .map(|w| PathBuf::from(&w[1]));
+    let target_from_args = args.windows(2).find(|w| w[0] == "--target").and_then(|w| {
+        // 次の引数が別のオプション（`-` で始まる）であれば無効とみなす
+        if w[1].starts_with('-') {
+            None
+        } else {
+            Some(PathBuf::from(&w[1]))
+        }
+    });
 
     if has_target_flag && target_from_args.is_none() {
         eprintln!("[safe-docker] ERROR: --target requires a directory argument.");
@@ -456,9 +460,14 @@ mod tests {
 
     #[test]
     fn test_default_target_dir() {
-        let target = default_target_dir();
-        assert!(target.is_some());
-        assert!(target.unwrap().to_string_lossy().contains(".local/bin"));
+        // HOME が設定されている環境でのみ Some を期待する
+        if dirs::home_dir().is_some() {
+            let target = default_target_dir();
+            assert!(target.is_some());
+            assert!(target.unwrap().to_string_lossy().contains(".local/bin"));
+        } else {
+            assert!(default_target_dir().is_none());
+        }
     }
 
     #[test]
@@ -466,5 +475,16 @@ mod tests {
         let args = vec!["setup".to_string(), "--target".to_string()];
         let exit_code = run(&args);
         assert_eq!(exit_code, 1); // --target に値がない場合はエラー
+    }
+
+    #[test]
+    fn test_setup_target_with_flag_as_value() {
+        let args = vec![
+            "setup".to_string(),
+            "--target".to_string(),
+            "--force".to_string(),
+        ];
+        let exit_code = run(&args);
+        assert_eq!(exit_code, 1); // --target の値がフラグの場合はエラー
     }
 }

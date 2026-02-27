@@ -358,11 +358,11 @@ mod tests {
     use crate::docker_args::{
         BindMount, DangerousFlag, DockerCommand, DockerSubcommand, MountSource,
     };
-    use crate::test_utils::{ENV_MUTEX, TempEnvVar};
+    use crate::test_utils::{TempEnvVar, env_lock};
 
     #[test]
     fn test_is_enabled_config() {
-        let lock = ENV_MUTEX.lock().unwrap();
+        let lock = env_lock();
         let _env = TempEnvVar::remove(&lock, "SAFE_DOCKER_AUDIT");
 
         let mut config = AuditConfig::default();
@@ -374,7 +374,7 @@ mod tests {
 
     #[test]
     fn test_is_enabled_env_var() {
-        let lock = ENV_MUTEX.lock().unwrap();
+        let lock = env_lock();
         let _env = TempEnvVar::set(&lock, "SAFE_DOCKER_AUDIT", "1");
 
         let config = AuditConfig::default();
@@ -383,7 +383,7 @@ mod tests {
 
     #[test]
     fn test_is_enabled_env_var_not_one() {
-        let lock = ENV_MUTEX.lock().unwrap();
+        let lock = env_lock();
         let _env = TempEnvVar::set(&lock, "SAFE_DOCKER_AUDIT", "0");
 
         let config = AuditConfig::default();

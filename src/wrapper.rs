@@ -501,7 +501,7 @@ fn exec_docker(docker_path: &Path, args: &[impl AsRef<std::ffi::OsStr>]) -> ! {
 mod tests {
     use super::*;
     use crate::config::Config;
-    use crate::test_utils::{ENV_MUTEX, TempEnvVar};
+    use crate::test_utils::{TempEnvVar, env_lock};
 
     fn default_config() -> Config {
         Config::default()
@@ -596,7 +596,7 @@ mod tests {
 
     #[test]
     fn test_find_real_docker_env_var() {
-        let lock = ENV_MUTEX.lock().unwrap();
+        let lock = env_lock();
         let config = default_config();
         // /usr/bin/docker が存在する場合のテスト
         if Path::new("/usr/bin/docker").exists() {
@@ -630,7 +630,7 @@ mod tests {
 
     #[test]
     fn test_find_real_docker_detailed_env_var_source() {
-        let lock = ENV_MUTEX.lock().unwrap();
+        let lock = env_lock();
         let _env = TempEnvVar::set(&lock, "SAFE_DOCKER_DOCKER_PATH", "/bin/echo");
 
         let config = default_config();
@@ -643,7 +643,7 @@ mod tests {
 
     #[test]
     fn test_find_real_docker_detailed_config_source() {
-        let lock = ENV_MUTEX.lock().unwrap();
+        let lock = env_lock();
         let _env = TempEnvVar::remove(&lock, "SAFE_DOCKER_DOCKER_PATH");
 
         let mut config = default_config();
@@ -657,7 +657,7 @@ mod tests {
 
     #[test]
     fn test_find_real_docker_detailed_not_found() {
-        let lock = ENV_MUTEX.lock().unwrap();
+        let lock = env_lock();
         let _env = TempEnvVar::set(&lock, "SAFE_DOCKER_DOCKER_PATH", "/nonexistent/docker_abc");
 
         let mut config = default_config();

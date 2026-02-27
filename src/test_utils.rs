@@ -7,16 +7,31 @@ use std::sync::{Mutex, MutexGuard};
 /// 全ての環境変数テストを直列化するグローバル Mutex。
 /// `std::env::set_var` / `remove_var` はプロセスグローバルな操作のため、
 /// 環境変数名が異なっても単一の Mutex で保護する（安全側に倒す）。
-pub static ENV_MUTEX: Mutex<()> = Mutex::new(());
+static ENV_MUTEX: Mutex<()> = Mutex::new(());
+
+/// `ENV_MUTEX` のロックを保持していることを型レベルで証明する newtype ガード。
+///
+/// `env_lock()` でのみ取得でき、`TempEnvVar` のコンストラクタに渡すことで
+/// 無関係な `Mutex<()>` のガードが誤って使われることを防ぐ。
+pub struct EnvLock<'a>(MutexGuard<'a, ()>);
+
+/// `ENV_MUTEX` をロックし、`EnvLock` ガードを返す。
+///
+/// # Panics
+/// Mutex が poisoned の場合にパニックする。
+pub fn env_lock() -> EnvLock<'static> {
+    EnvLock(ENV_MUTEX.lock().unwrap())
+}
 
 /// 環境変数を一時的に設定し、Drop 時に元の値（または未設定状態）に復元する RAII ガード。
 ///
-/// `MutexGuard` の参照をコンストラクタで要求することで、ロック保持をコンパイル時に強制する。
-/// ライフタイム `'lock` により、`TempEnvVar` が存在する間は `MutexGuard` がドロップされない。
+/// `EnvLock` の参照をコンストラクタで要求することで、`ENV_MUTEX` のロック保持を
+/// コンパイル時に強制する。ライフタイム `'lock` により、`TempEnvVar` が存在する間は
+/// `EnvLock` がドロップされない。
 ///
 /// # 使い方
 /// ```ignore
-/// let lock = ENV_MUTEX.lock().unwrap();
+/// let lock = env_lock();
 /// let _guard = TempEnvVar::set(&lock, "MY_VAR", "value");
 /// // MY_VAR == "value"
 /// // _guard が Drop されると MY_VAR は元の状態に戻る
@@ -32,10 +47,10 @@ impl<'lock> TempEnvVar<'lock> {
     /// 環境変数を設定し、ガードを返す。
     /// ガードが Drop されると元の値に復元される。
     ///
-    /// `MutexGuard` の参照を要求することで、ENV_MUTEX のロック保持をコンパイル時に強制する。
-    pub fn set(_guard: &'lock MutexGuard<'_, ()>, key: &str, value: &str) -> Self {
+    /// `EnvLock` の参照を要求することで、`ENV_MUTEX` のロック保持をコンパイル時に強制する。
+    pub fn set(_guard: &'lock EnvLock<'_>, key: &str, value: &str) -> Self {
         let original = std::env::var(key).ok();
-        // SAFETY: ENV_MUTEX のロック保持が _guard パラメータにより保証されている
+        // SAFETY: ENV_MUTEX のロック保持が EnvLock パラメータにより保証されている
         unsafe { std::env::set_var(key, value) };
         Self {
             key: key.to_string(),
@@ -47,10 +62,10 @@ impl<'lock> TempEnvVar<'lock> {
     /// 環境変数を削除し、ガードを返す。
     /// ガードが Drop されると元の値に復元される。
     ///
-    /// `MutexGuard` の参照を要求することで、ENV_MUTEX のロック保持をコンパイル時に強制する。
-    pub fn remove(_guard: &'lock MutexGuard<'_, ()>, key: &str) -> Self {
+    /// `EnvLock` の参照を要求することで、`ENV_MUTEX` のロック保持をコンパイル時に強制する。
+    pub fn remove(_guard: &'lock EnvLock<'_>, key: &str) -> Self {
         let original = std::env::var(key).ok();
-        // SAFETY: ENV_MUTEX のロック保持が _guard パラメータにより保証されている
+        // SAFETY: ENV_MUTEX のロック保持が EnvLock パラメータにより保証されている
         unsafe { std::env::remove_var(key) };
         Self {
             key: key.to_string(),
@@ -63,7 +78,7 @@ impl<'lock> TempEnvVar<'lock> {
 impl Drop for TempEnvVar<'_> {
     fn drop(&mut self) {
         // SAFETY: ENV_MUTEX のロック保持がライフタイムにより保証されている
-        // （MutexGuard は TempEnvVar より後に Drop される）
+        // （EnvLock は TempEnvVar より後に Drop される）
         match &self.original {
             Some(val) => unsafe { std::env::set_var(&self.key, val) },
             None => unsafe { std::env::remove_var(&self.key) },
@@ -77,7 +92,7 @@ mod tests {
 
     #[test]
     fn test_temp_env_var_set_and_restore() {
-        let lock = ENV_MUTEX.lock().unwrap();
+        let lock = env_lock();
 
         // 初期状態: 未設定
         let _cleanup = TempEnvVar::remove(&lock, "TEST_SAFE_DOCKER_TEMP_VAR");
@@ -93,7 +108,7 @@ mod tests {
 
     #[test]
     fn test_temp_env_var_remove_and_restore() {
-        let lock = ENV_MUTEX.lock().unwrap();
+        let lock = env_lock();
 
         // 初期状態: 設定済み
         let _outer = TempEnvVar::set(&lock, "TEST_SAFE_DOCKER_TEMP_VAR2", "original");
@@ -111,7 +126,7 @@ mod tests {
 
     #[test]
     fn test_temp_env_var_overwrite_and_restore() {
-        let lock = ENV_MUTEX.lock().unwrap();
+        let lock = env_lock();
 
         let _outer = TempEnvVar::set(&lock, "TEST_SAFE_DOCKER_TEMP_VAR3", "first");
         assert_eq!(
