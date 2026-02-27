@@ -1137,3 +1137,63 @@ fn test_deny_compose_env_file_list_outside_home() {
         "compose env_file list with path outside $HOME should deny",
     );
 }
+
+// --- Compose mount propagation E2E テスト ---
+
+#[test]
+fn test_deny_compose_volume_propagation_shared() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("compose.yml"),
+        "services:\n  web:\n    image: ubuntu\n    volumes:\n      - ./data:/data:shared\n",
+    )
+    .unwrap();
+
+    let input = serde_json::json!({
+        "session_id": "test-session",
+        "hook_event_name": "PreToolUse",
+        "tool_name": "Bash",
+        "tool_input": {
+            "command": "docker compose up",
+            "description": "test"
+        },
+        "cwd": dir.path().to_str().unwrap()
+    })
+    .to_string();
+
+    let (stdout, exit_code) = run_hook(&input);
+    assert_eq!(exit_code, 0);
+    assert_deny(
+        &stdout,
+        "compose volume with :shared propagation should deny",
+    );
+}
+
+#[test]
+fn test_deny_compose_volume_propagation_long_syntax() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("compose.yml"),
+        "services:\n  web:\n    image: ubuntu\n    volumes:\n      - type: bind\n        source: ./data\n        target: /data\n        bind:\n          propagation: rshared\n",
+    )
+    .unwrap();
+
+    let input = serde_json::json!({
+        "session_id": "test-session",
+        "hook_event_name": "PreToolUse",
+        "tool_name": "Bash",
+        "tool_input": {
+            "command": "docker compose up",
+            "description": "test"
+        },
+        "cwd": dir.path().to_str().unwrap()
+    })
+    .to_string();
+
+    let (stdout, exit_code) = run_hook(&input);
+    assert_eq!(exit_code, 0);
+    assert_deny(
+        &stdout,
+        "compose volume with bind.propagation: rshared should deny",
+    );
+}
