@@ -479,4 +479,306 @@ mod tests {
         let result = split_commands("docker run ubuntu");
         assert_eq!(result, vec!["docker run ubuntu"]);
     }
+
+    // --- split_commands: ネスト・エスケープ・複合パターン ---
+
+    #[test]
+    fn test_split_nested_subshell() {
+        let result = split_commands("echo $(echo $(docker ps)) && docker run ubuntu");
+        assert_eq!(
+            result,
+            vec!["echo $(echo $(docker ps))", "docker run ubuntu"]
+        );
+    }
+
+    #[test]
+    fn test_split_backtick_with_separator() {
+        let result = split_commands("echo `docker ps | head` && docker run ubuntu");
+        assert_eq!(result, vec!["echo `docker ps | head`", "docker run ubuntu"]);
+    }
+
+    #[test]
+    fn test_split_escaped_separator_in_double_quote() {
+        // ダブルクォート内のエスケープされたパイプ — クォート内なので分割されない
+        let result = split_commands(r#"echo "hello \| world" && docker run ubuntu"#);
+        assert_eq!(
+            result,
+            vec![r#"echo "hello \| world""#, "docker run ubuntu"]
+        );
+    }
+
+    #[test]
+    fn test_split_newline_separator() {
+        let result = split_commands("echo hello\ndocker run ubuntu\necho done");
+        assert_eq!(result, vec!["echo hello", "docker run ubuntu", "echo done"]);
+    }
+
+    #[test]
+    fn test_split_background_ampersand() {
+        // 単独の & はバックグラウンド実行 = セパレータ扱い
+        let result = split_commands("docker run ubuntu & echo next");
+        assert_eq!(result, vec!["docker run ubuntu", "echo next"]);
+    }
+
+    #[test]
+    fn test_split_consecutive_semicolons() {
+        let result = split_commands("echo a ;; echo b");
+        assert_eq!(result, vec!["echo a", "echo b"]);
+    }
+
+    #[test]
+    fn test_split_mixed_separators() {
+        let result = split_commands("echo a | grep b && echo c ; echo d || echo e");
+        assert_eq!(
+            result,
+            vec!["echo a", "grep b", "echo c", "echo d", "echo e"]
+        );
+    }
+
+    #[test]
+    fn test_split_subshell_with_pipe_inside() {
+        // $() 内のパイプは分割しない
+        let result = split_commands("echo $(docker ps | grep web) ; echo done");
+        assert_eq!(result, vec!["echo $(docker ps | grep web)", "echo done"]);
+    }
+
+    #[test]
+    fn test_split_subshell_with_chain_inside() {
+        let result = split_commands("echo $(cd /tmp && ls) | grep test");
+        assert_eq!(result, vec!["echo $(cd /tmp && ls)", "grep test"]);
+    }
+
+    #[test]
+    fn test_split_quote_mixed_with_subshell() {
+        let result = split_commands(r#"echo "$(docker ps)" && docker run -e "FOO=bar" ubuntu"#);
+        assert_eq!(
+            result,
+            vec![
+                r#"echo "$(docker ps)""#,
+                r#"docker run -e "FOO=bar" ubuntu"#
+            ]
+        );
+    }
+
+    #[test]
+    fn test_split_only_whitespace() {
+        let result = split_commands("   ");
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_split_trailing_separator() {
+        let result = split_commands("echo hello ;");
+        assert_eq!(result, vec!["echo hello"]);
+    }
+
+    #[test]
+    fn test_split_leading_separator() {
+        let result = split_commands("; echo hello");
+        assert_eq!(result, vec!["echo hello"]);
+    }
+
+    #[test]
+    fn test_split_escaped_backslash_before_separator() {
+        // \\\\ → エスケープされたバックスラッシュ。次の && は通常のセパレータ
+        let result = split_commands("echo test\\\\ && docker run ubuntu");
+        assert_eq!(result, vec!["echo test\\\\", "docker run ubuntu"]);
+    }
+
+    #[test]
+    fn test_split_single_quote_prevents_subshell() {
+        // シングルクォート内の $() は展開されないが、パーサーは分割しない
+        let result = split_commands("echo '$(docker ps)' && echo done");
+        assert_eq!(result, vec!["echo '$(docker ps)'", "echo done"]);
+    }
+
+    // --- detect_shell_wrappers ---
+
+    #[test]
+    fn test_detect_eval_docker() {
+        assert!(detect_shell_wrappers(r#"eval "docker run ubuntu""#));
+    }
+
+    #[test]
+    fn test_detect_eval_no_docker() {
+        assert!(!detect_shell_wrappers(r#"eval "echo hello""#));
+    }
+
+    #[test]
+    fn test_detect_bash_c_docker() {
+        assert!(detect_shell_wrappers(
+            r#"bash -c "docker run --privileged ubuntu""#
+        ));
+    }
+
+    #[test]
+    fn test_detect_sh_c_docker() {
+        assert!(detect_shell_wrappers(r#"sh -c "docker run ubuntu""#));
+    }
+
+    #[test]
+    fn test_detect_zsh_c_docker() {
+        assert!(detect_shell_wrappers(r#"zsh -c "docker run ubuntu""#));
+    }
+
+    #[test]
+    fn test_detect_bin_bash_c_docker() {
+        assert!(detect_shell_wrappers(r#"/bin/bash -c "docker run ubuntu""#));
+    }
+
+    #[test]
+    fn test_detect_bin_sh_c_docker() {
+        assert!(detect_shell_wrappers(r#"/bin/sh -c "docker run ubuntu""#));
+    }
+
+    #[test]
+    fn test_detect_bash_c_no_docker() {
+        assert!(!detect_shell_wrappers(r#"bash -c "echo hello""#));
+    }
+
+    #[test]
+    fn test_detect_sudo_bash_c_docker() {
+        assert!(detect_shell_wrappers(r#"sudo bash -c "docker run ubuntu""#));
+    }
+
+    #[test]
+    fn test_detect_sudo_eval_docker() {
+        assert!(detect_shell_wrappers(r#"sudo eval "docker run ubuntu""#));
+    }
+
+    #[test]
+    fn test_detect_xargs_docker() {
+        assert!(detect_shell_wrappers("xargs docker run"));
+    }
+
+    #[test]
+    fn test_detect_xargs_no_docker() {
+        assert!(!detect_shell_wrappers("xargs echo"));
+    }
+
+    #[test]
+    fn test_detect_plain_docker_not_indirect() {
+        // 直接的な docker コマンドは間接実行ではない
+        assert!(!detect_shell_wrappers("docker run ubuntu"));
+    }
+
+    #[test]
+    fn test_detect_echo_not_indirect() {
+        assert!(!detect_shell_wrappers("echo hello world"));
+    }
+
+    // --- is_docker_command: 追加パターン ---
+
+    #[test]
+    fn test_is_docker_command_docker_only() {
+        assert!(is_docker_command("docker"));
+    }
+
+    #[test]
+    fn test_is_docker_command_docker_compose_only() {
+        assert!(is_docker_command("docker-compose"));
+    }
+
+    #[test]
+    fn test_is_docker_command_with_tab() {
+        assert!(is_docker_command("docker\trun ubuntu"));
+    }
+
+    #[test]
+    fn test_is_docker_command_env_with_quotes() {
+        assert!(is_docker_command(
+            r#"DOCKER_HOST="tcp://localhost:2375" docker ps"#
+        ));
+    }
+
+    #[test]
+    fn test_is_docker_command_multiple_env() {
+        assert!(is_docker_command("FOO=bar BAZ=qux docker run ubuntu"));
+    }
+
+    #[test]
+    fn test_is_docker_command_sudo_compose() {
+        assert!(is_docker_command("sudo docker-compose up"));
+    }
+
+    #[test]
+    fn test_is_docker_not_in_string() {
+        // "docker" を含むが docker コマンドではない
+        assert!(!is_docker_command("echo docker is great"));
+    }
+
+    // --- extract_docker_args: 追加パターン ---
+
+    #[test]
+    fn test_extract_docker_args_quoted() {
+        let args = extract_docker_args(r#"docker run -e "FOO=hello world" ubuntu"#);
+        assert_eq!(args, vec!["run", "-e", "FOO=hello world", "ubuntu"]);
+    }
+
+    #[test]
+    fn test_extract_docker_args_multiple_env_prefix() {
+        let args = extract_docker_args("FOO=bar BAZ=qux docker run ubuntu");
+        assert_eq!(args, vec!["run", "ubuntu"]);
+    }
+
+    #[test]
+    fn test_extract_docker_args_sudo_compose() {
+        let args = extract_docker_args("sudo docker-compose up -d");
+        assert_eq!(args, vec!["compose", "up", "-d"]);
+    }
+
+    #[test]
+    fn test_extract_docker_args_non_docker() {
+        let args = extract_docker_args("echo hello world");
+        assert!(args.is_empty());
+    }
+
+    // --- skip_env_assignments / find_value_end: 間接テスト ---
+
+    #[test]
+    fn test_is_docker_command_env_single_quote_value() {
+        assert!(is_docker_command("FOO='hello world' docker ps"));
+    }
+
+    #[test]
+    fn test_is_docker_command_env_double_quote_with_escape() {
+        assert!(is_docker_command(r#"FOO="hello\"world" docker ps"#));
+    }
+
+    #[test]
+    fn test_is_docker_command_env_no_space_value() {
+        assert!(is_docker_command("FOO=bar docker ps"));
+    }
+
+    #[test]
+    fn test_is_docker_command_env_only() {
+        // 環境変数設定だけで docker なし
+        assert!(!is_docker_command("FOO=bar BAZ=qux"));
+    }
+
+    #[test]
+    fn test_is_docker_command_leading_spaces() {
+        assert!(is_docker_command("  docker run ubuntu"));
+    }
+
+    // --- consume_subshell: 間接テスト via split_commands ---
+
+    #[test]
+    fn test_split_subshell_with_quotes_inside() {
+        // $() 内にクォートがある場合、) をクォート内で無視する
+        let result = split_commands(r#"echo $(echo ")" ) && docker run ubuntu"#);
+        assert_eq!(result, vec![r#"echo $(echo ")" )"#, "docker run ubuntu"]);
+    }
+
+    #[test]
+    fn test_split_deeply_nested_subshell() {
+        let result = split_commands("echo $(echo $(echo $(echo hi))) | grep hi");
+        assert_eq!(result, vec!["echo $(echo $(echo $(echo hi)))", "grep hi"]);
+    }
+
+    #[test]
+    fn test_split_backtick_with_quotes() {
+        let result = split_commands(r#"echo `echo "hello"` && docker ps"#);
+        assert_eq!(result, vec![r#"echo `echo "hello"`"#, "docker ps"]);
+    }
 }

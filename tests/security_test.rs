@@ -4,7 +4,12 @@ use std::io::Write;
 use std::process::{Command, Stdio};
 
 fn run_hook(input_json: &str) -> (String, i32) {
+    // 空の config をピンしてテストを hermetic にする（環境の config.toml の影響を排除）
+    let config_dir = tempfile::tempdir().expect("Failed to create temp dir for config");
+    let config_path = config_dir.path().join("empty.toml");
+    std::fs::write(&config_path, "").expect("Failed to write empty config");
     let mut child = Command::new(env!("CARGO_BIN_EXE_safe-docker"))
+        .env("SAFE_DOCKER_CONFIG", &config_path)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -1266,4 +1271,120 @@ fn test_ask_cgroup_parent_cli_space() {
     let (stdout, exit_code) = run_hook(&input);
     assert_eq!(exit_code, 0);
     assert_ask(&stdout, "--cgroup-parent (space) should ask");
+}
+
+// --- Compose driver_opts.device バインドマウント偽装テスト ---
+
+#[test]
+fn test_deny_compose_driver_opts_device_outside_home() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("compose.yml"),
+        r#"services:
+  web:
+    image: ubuntu
+    volumes:
+      - type: volume
+        source: mydata
+        target: /data
+        driver_opts:
+          device: /etc/passwd
+"#,
+    )
+    .unwrap();
+
+    let input = serde_json::json!({
+        "session_id": "test-session",
+        "hook_event_name": "PreToolUse",
+        "tool_name": "Bash",
+        "tool_input": {
+            "command": "docker compose up",
+            "description": "test"
+        },
+        "cwd": dir.path().to_str().unwrap()
+    })
+    .to_string();
+
+    let (stdout, exit_code) = run_hook(&input);
+    assert_eq!(exit_code, 0);
+    assert_deny(
+        &stdout,
+        "compose driver_opts.device with /etc/passwd should deny",
+    );
+}
+
+#[test]
+fn test_deny_compose_driver_opts_device_relative_traversal() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("compose.yml"),
+        r#"services:
+  web:
+    image: ubuntu
+    volumes:
+      - type: volume
+        source: mydata
+        target: /data
+        driver_opts:
+          device: ./../../etc
+"#,
+    )
+    .unwrap();
+
+    let input = serde_json::json!({
+        "session_id": "test-session",
+        "hook_event_name": "PreToolUse",
+        "tool_name": "Bash",
+        "tool_input": {
+            "command": "docker compose up",
+            "description": "test"
+        },
+        "cwd": dir.path().to_str().unwrap()
+    })
+    .to_string();
+
+    let (stdout, exit_code) = run_hook(&input);
+    assert_eq!(exit_code, 0);
+    assert_deny(
+        &stdout,
+        "compose driver_opts.device with path traversal should deny",
+    );
+}
+
+#[test]
+fn test_deny_compose_driver_opts_device_absolute_path() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("compose.yml"),
+        r#"services:
+  web:
+    image: ubuntu
+    volumes:
+      - type: volume
+        source: mydata
+        target: /data
+        driver_opts:
+          device: /var/log
+"#,
+    )
+    .unwrap();
+
+    let input = serde_json::json!({
+        "session_id": "test-session",
+        "hook_event_name": "PreToolUse",
+        "tool_name": "Bash",
+        "tool_input": {
+            "command": "docker compose up",
+            "description": "test"
+        },
+        "cwd": dir.path().to_str().unwrap()
+    })
+    .to_string();
+
+    let (stdout, exit_code) = run_hook(&input);
+    assert_eq!(exit_code, 0);
+    assert_deny(
+        &stdout,
+        "compose driver_opts.device with /var/log should deny",
+    );
 }
