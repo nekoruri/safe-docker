@@ -51,7 +51,12 @@ pub fn analyze_compose(compose_path: &Path) -> Result<ComposeAnalysis> {
     // services セクション解析
     if let Some(services) = yaml.get("services").and_then(|s| s.as_mapping()) {
         for (_service_name, service) in services {
-            extract_service_volumes(service, &compose_dir, &mut analysis.bind_mounts);
+            extract_service_volumes(
+                service,
+                &compose_dir,
+                &mut analysis.bind_mounts,
+                &mut analysis.dangerous_flags,
+            );
             extract_service_dangerous_settings(service, &mut analysis.dangerous_flags);
         }
     }
@@ -74,6 +79,7 @@ fn extract_service_volumes(
     service: &serde_yml::Value,
     compose_dir: &Path,
     mounts: &mut Vec<BindMount>,
+    flags: &mut Vec<DangerousFlag>,
 ) {
     let Some(volumes) = service.get("volumes").and_then(|v| v.as_sequence()) else {
         return;
@@ -83,13 +89,13 @@ fn extract_service_volumes(
         match volume {
             // Short syntax: "host:container[:opts]"
             serde_yml::Value::String(s) => {
-                if let Some(bm) = parse_short_volume(s, compose_dir) {
+                if let Some(bm) = parse_short_volume(s, compose_dir, flags) {
                     mounts.push(bm);
                 }
             }
             // Long syntax: { type: bind, source: ..., target: ... }
             serde_yml::Value::Mapping(m) => {
-                if let Some(bm) = parse_long_volume(m, compose_dir) {
+                if let Some(bm) = parse_long_volume(m, compose_dir, flags) {
                     mounts.push(bm);
                 }
             }
@@ -210,6 +216,29 @@ fn extract_service_dangerous_settings(service: &serde_yml::Value, flags: &mut Ve
         }
     }
 
+    // extra_hosts: list or mapping format
+    if let Some(extra_hosts) = service.get("extra_hosts") {
+        match extra_hosts {
+            // List format: ["host:ip", ...]
+            serde_yml::Value::Sequence(seq) => {
+                for item in seq {
+                    if let Some(s) = item.as_str() {
+                        flags.push(DangerousFlag::AddHost(s.to_string()));
+                    }
+                }
+            }
+            // Mapping format: { host: ip, ... }
+            serde_yml::Value::Mapping(map) => {
+                for (key, value) in map {
+                    if let (Some(host), Some(ip)) = (key.as_str(), value.as_str()) {
+                        flags.push(DangerousFlag::AddHost(format!("{}:{}", host, ip)));
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
     // sysctls: list or mapping format
     if let Some(sysctls) = service.get("sysctls") {
         match sysctls {
@@ -317,7 +346,11 @@ fn extract_include_paths(
 }
 
 /// Short syntax のボリュームをパース: "host:container[:opts]"
-fn parse_short_volume(volume_str: &str, compose_dir: &Path) -> Option<BindMount> {
+fn parse_short_volume(
+    volume_str: &str,
+    compose_dir: &Path,
+    flags: &mut Vec<DangerousFlag>,
+) -> Option<BindMount> {
     let parts: Vec<&str> = volume_str.splitn(3, ':').collect();
     if parts.len() < 2 {
         return None;
@@ -334,9 +367,15 @@ fn parse_short_volume(volume_str: &str, compose_dir: &Path) -> Option<BindMount>
         return None;
     }
 
-    let read_only = parts
-        .get(2)
-        .is_some_and(|opts| opts.split(',').any(|o| o == "ro"));
+    let opts = parts.get(2).copied().unwrap_or("");
+    let read_only = opts.split(',').any(|o| o == "ro");
+
+    // propagation の検出 (shared, rshared)
+    for opt in opts.split(',') {
+        if matches!(opt, "shared" | "rshared") {
+            flags.push(DangerousFlag::MountPropagation(opt.to_string()));
+        }
+    }
 
     Some(BindMount {
         host_path: resolve_path(host, compose_dir),
@@ -347,7 +386,11 @@ fn parse_short_volume(volume_str: &str, compose_dir: &Path) -> Option<BindMount>
 }
 
 /// Long syntax のボリュームをパース
-fn parse_long_volume(mapping: &serde_yml::Mapping, compose_dir: &Path) -> Option<BindMount> {
+fn parse_long_volume(
+    mapping: &serde_yml::Mapping,
+    compose_dir: &Path,
+    flags: &mut Vec<DangerousFlag>,
+) -> Option<BindMount> {
     let volume_type = mapping
         .get(serde_yml::Value::String("type".to_string()))
         .and_then(|v| v.as_str())
@@ -370,6 +413,19 @@ fn parse_long_volume(mapping: &serde_yml::Mapping, compose_dir: &Path) -> Option
         .get(serde_yml::Value::String("read_only".to_string()))
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
+
+    // bind.propagation の検出
+    if let Some(propagation) = mapping
+        .get(serde_yml::Value::String("bind".to_string()))
+        .and_then(|b| b.as_mapping())
+        .and_then(|bind| {
+            bind.get(serde_yml::Value::String("propagation".to_string()))
+                .and_then(|v| v.as_str())
+        })
+        && matches!(propagation, "shared" | "rshared")
+    {
+        flags.push(DangerousFlag::MountPropagation(propagation.to_string()));
+    }
 
     Some(BindMount {
         host_path: resolve_path(source, compose_dir),
@@ -519,20 +575,23 @@ mod tests {
 
     #[test]
     fn test_parse_short_volume_absolute() {
-        let bm = parse_short_volume("/host:/container", Path::new("/project")).unwrap();
+        let mut flags = vec![];
+        let bm = parse_short_volume("/host:/container", Path::new("/project"), &mut flags).unwrap();
         assert_eq!(bm.host_path, "/host");
         assert_eq!(bm.container_path, "/container");
     }
 
     #[test]
     fn test_parse_short_volume_relative() {
-        let bm = parse_short_volume("./src:/app/src", Path::new("/project")).unwrap();
+        let mut flags = vec![];
+        let bm = parse_short_volume("./src:/app/src", Path::new("/project"), &mut flags).unwrap();
         assert_eq!(bm.host_path, "/project/./src");
     }
 
     #[test]
     fn test_parse_short_volume_named() {
-        assert!(parse_short_volume("myvolume:/data", Path::new("/project")).is_none());
+        let mut flags = vec![];
+        assert!(parse_short_volume("myvolume:/data", Path::new("/project"), &mut flags).is_none());
     }
 
     #[test]
@@ -1107,5 +1166,136 @@ services:
 
         let analysis = analyze_compose(&compose_path).unwrap();
         assert!(analysis.env_file_paths.is_empty());
+    }
+
+    // --- Compose mount propagation ---
+
+    #[test]
+    fn test_parse_compose_volume_propagation_short_syntax() {
+        let yaml_str = r#"
+services:
+  web:
+    image: ubuntu
+    volumes:
+      - ./data:/data:shared
+"#;
+        let dir = tempfile::tempdir().unwrap();
+        let compose_path = dir.path().join("compose.yml");
+        std::fs::write(&compose_path, yaml_str).unwrap();
+
+        let analysis = analyze_compose(&compose_path).unwrap();
+        assert!(
+            analysis
+                .dangerous_flags
+                .iter()
+                .any(|f| matches!(f, DangerousFlag::MountPropagation(m) if m == "shared")),
+            "Short syntax :shared should be detected: {:?}",
+            analysis.dangerous_flags
+        );
+    }
+
+    #[test]
+    fn test_parse_compose_volume_propagation_short_syntax_rshared() {
+        let yaml_str = r#"
+services:
+  web:
+    image: ubuntu
+    volumes:
+      - ./data:/data:rshared,ro
+"#;
+        let dir = tempfile::tempdir().unwrap();
+        let compose_path = dir.path().join("compose.yml");
+        std::fs::write(&compose_path, yaml_str).unwrap();
+
+        let analysis = analyze_compose(&compose_path).unwrap();
+        assert!(
+            analysis
+                .dangerous_flags
+                .iter()
+                .any(|f| matches!(f, DangerousFlag::MountPropagation(m) if m == "rshared")),
+            "Short syntax :rshared should be detected: {:?}",
+            analysis.dangerous_flags
+        );
+        // read_only も同時に検出されること
+        assert!(analysis.bind_mounts[0].read_only);
+    }
+
+    #[test]
+    fn test_parse_compose_volume_propagation_long_syntax() {
+        let yaml_str = r#"
+services:
+  web:
+    image: ubuntu
+    volumes:
+      - type: bind
+        source: ./data
+        target: /data
+        bind:
+          propagation: shared
+"#;
+        let dir = tempfile::tempdir().unwrap();
+        let compose_path = dir.path().join("compose.yml");
+        std::fs::write(&compose_path, yaml_str).unwrap();
+
+        let analysis = analyze_compose(&compose_path).unwrap();
+        assert!(
+            analysis
+                .dangerous_flags
+                .iter()
+                .any(|f| matches!(f, DangerousFlag::MountPropagation(m) if m == "shared")),
+            "Long syntax bind.propagation: shared should be detected: {:?}",
+            analysis.dangerous_flags
+        );
+    }
+
+    #[test]
+    fn test_parse_compose_volume_propagation_long_syntax_rshared() {
+        let yaml_str = r#"
+services:
+  web:
+    image: ubuntu
+    volumes:
+      - type: bind
+        source: ./data
+        target: /data
+        bind:
+          propagation: rshared
+"#;
+        let dir = tempfile::tempdir().unwrap();
+        let compose_path = dir.path().join("compose.yml");
+        std::fs::write(&compose_path, yaml_str).unwrap();
+
+        let analysis = analyze_compose(&compose_path).unwrap();
+        assert!(
+            analysis
+                .dangerous_flags
+                .iter()
+                .any(|f| matches!(f, DangerousFlag::MountPropagation(m) if m == "rshared")),
+            "Long syntax bind.propagation: rshared should be detected: {:?}",
+            analysis.dangerous_flags
+        );
+    }
+
+    #[test]
+    fn test_parse_compose_volume_no_propagation() {
+        let yaml_str = r#"
+services:
+  web:
+    image: ubuntu
+    volumes:
+      - ./data:/data:ro
+"#;
+        let dir = tempfile::tempdir().unwrap();
+        let compose_path = dir.path().join("compose.yml");
+        std::fs::write(&compose_path, yaml_str).unwrap();
+
+        let analysis = analyze_compose(&compose_path).unwrap();
+        assert!(
+            !analysis
+                .dangerous_flags
+                .iter()
+                .any(|f| matches!(f, DangerousFlag::MountPropagation(_))),
+            "Normal :ro should not trigger MountPropagation"
+        );
     }
 }

@@ -1255,7 +1255,7 @@ fn test_wrapper_deny_compose_env_file_outside_home() {
 }
 
 #[test]
-fn test_wrapper_allow_compose_env_file_relative() {
+fn test_wrapper_deny_compose_env_file_relative() {
     let dir = tempfile::tempdir().unwrap();
     // $HOME 内にある相対パスの env_file は、CWD が tempdir なので $HOME 外として扱われる
     // ただし相対パスは compose_dir 基準で解決されるので、tempdir/.env になる → $HOME 外 → deny

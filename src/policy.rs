@@ -1,3 +1,5 @@
+use std::net::{Ipv4Addr, Ipv6Addr};
+
 use crate::config::Config;
 use crate::docker_args::{DangerousFlag, DockerCommand, DockerSubcommand};
 use crate::hook::Decision;
@@ -17,6 +19,91 @@ fn is_dangerous_security_opt(opt: &str) -> bool {
         // CIS 5.2: SELinux ラベリングの無効化
         || opt.contains("label=disable")
         || opt.contains("label:disable")
+}
+
+/// クラウドメタデータエンドポイントの既知ドメイン名
+const METADATA_DOMAINS: &[&str] = &[
+    "metadata.google.internal",
+    "metadata.google.internal.",
+    "instance-data.ec2.internal",
+    "instance-data.ec2.internal.",
+    "metadata.azure.com",
+    "metadata.azure.com.",
+];
+
+/// --add-host の値がクラウドメタデータエンドポイントを指しているか判定
+///
+/// `host:ip` 形式をパースし、IP 部分について:
+/// - IPv4: パースして `169.254.169.254` と比較
+/// - IPv6: ブラケット除去 + 小文字正規化 + canonical 形式変換して `fd00:ec2::254` と比較
+/// - ドメイン名: `metadata.google.internal` 等をチェック
+fn is_metadata_endpoint(add_host_val: &str) -> bool {
+    // host:ip / host=ip 形式でパース。IPv6 は host:[ip] や host:ip の形式がある
+    // Docker/Compose は `:` と `=` の両方を区切り文字として受け付ける
+    let (host_part, ip_part) = match (add_host_val.find('['), add_host_val.find(']')) {
+        // ブラケット形式: host:[::1] or [::1] — 開始・終了の両方が見つかった場合のみ
+        (Some(open), Some(close)) if open < close => {
+            let host = add_host_val[..open].trim_end_matches([':', '=']);
+            let ip = &add_host_val[open + 1..close];
+            (host, ip)
+        }
+        _ => {
+            // host:ip / host=ip 形式 — `:` か `=` のうち先に出現する方で分割
+            // IPv6 はコロンを含むため、最初の区切り文字で分割する
+            let colon_pos = add_host_val.find(':');
+            let equals_pos = add_host_val.find('=');
+            match (colon_pos, equals_pos) {
+                (Some(c), Some(e)) if e < c => {
+                    let (host, rest) = add_host_val.split_at(e);
+                    (host, &rest[1..])
+                }
+                (Some(_), _) => {
+                    let (host, rest) = add_host_val.split_once(':').unwrap();
+                    (host, rest)
+                }
+                (None, Some(_)) => {
+                    let (host, rest) = add_host_val.split_once('=').unwrap();
+                    (host, rest)
+                }
+                (None, None) => (add_host_val, ""),
+            }
+        }
+    };
+
+    let ip_lower = ip_part.to_lowercase();
+
+    // IPv4 チェック
+    if let Ok(addr) = ip_lower.parse::<Ipv4Addr>()
+        && addr == Ipv4Addr::new(169, 254, 169, 254)
+    {
+        return true;
+    }
+
+    // IPv6 チェック (canonical 形式で比較)
+    if let Ok(addr) = ip_lower.parse::<Ipv6Addr>() {
+        // SAFETY: "fd00:ec2::254" is a valid IPv6 literal, parse cannot fail
+        let target: Ipv6Addr = "fd00:ec2::254".parse().unwrap();
+        if addr == target {
+            return true;
+        }
+    }
+
+    // ドメイン名チェック (host 部分)
+    let host_lower = host_part.to_lowercase();
+    for domain in METADATA_DOMAINS {
+        if host_lower == *domain {
+            return true;
+        }
+    }
+
+    // IP 部分がドメイン名の場合もチェック (--add-host=myhost:metadata.google.internal)
+    for domain in METADATA_DOMAINS {
+        if ip_lower == *domain {
+            return true;
+        }
+    }
+
+    false
 }
 
 /// Docker コマンドに対してポリシーを適用し、最終的な Decision を返す
@@ -126,7 +213,7 @@ pub fn evaluate(cmd: &DockerCommand, config: &Config, cwd: &str) -> Decision {
                 }
             }
             DangerousFlag::AddHost(val) => {
-                if val.contains("169.254.169.254") || val.contains("fd00:ec2::254") {
+                if is_metadata_endpoint(val) {
                     ask_reasons.push(format!(
                         "--add-host {} points to the cloud metadata endpoint; this could be used for credential theft",
                         val
@@ -290,6 +377,31 @@ pub fn evaluate(cmd: &DockerCommand, config: &Config, cwd: &str) -> Decision {
                         val
                     ));
                 }
+            }
+            DangerousFlag::MountPropagation(mode) => {
+                deny_reasons.push(format!(
+                    "Compose: mount propagation '{}' is not allowed (may expose host mounts)",
+                    mode
+                ));
+            }
+            DangerousFlag::AddHost(val) => {
+                if is_metadata_endpoint(val) {
+                    ask_reasons.push(format!(
+                        "Compose: extra_hosts '{}' points to the cloud metadata endpoint; this could be used for credential theft",
+                        val
+                    ));
+                }
+            }
+            DangerousFlag::BuildArgSecret(val) => {
+                let display = if val.contains('=') {
+                    val.split('=').next().unwrap_or(val)
+                } else {
+                    val
+                };
+                ask_reasons.push(format!(
+                    "Compose: build arg '{}' appears to contain a secret; build args are visible in image layers",
+                    display
+                ));
             }
             _ => {}
         }
@@ -1254,5 +1366,92 @@ mod tests {
             Decision::Allow,
             "Compose env_file inside $HOME should be allowed"
         );
+    }
+
+    // --- is_metadata_endpoint ユニットテスト ---
+
+    #[test]
+    fn test_is_metadata_endpoint_ipv4() {
+        assert!(is_metadata_endpoint("metadata:169.254.169.254"));
+        assert!(is_metadata_endpoint("myhost:169.254.169.254"));
+    }
+
+    #[test]
+    fn test_is_metadata_endpoint_ipv4_normal() {
+        assert!(!is_metadata_endpoint("myhost:192.168.1.1"));
+        assert!(!is_metadata_endpoint("myhost:10.0.0.1"));
+    }
+
+    #[test]
+    fn test_is_metadata_endpoint_equals_separator() {
+        // Docker/Compose は `=` 区切りも受け付ける
+        assert!(is_metadata_endpoint("metadata=169.254.169.254"));
+        assert!(is_metadata_endpoint("myhost=fd00:ec2::254"));
+    }
+
+    #[test]
+    fn test_is_metadata_endpoint_ipv6() {
+        assert!(is_metadata_endpoint("metadata:fd00:ec2::254"));
+        assert!(is_metadata_endpoint("ec2-metadata:fd00:ec2::254"));
+    }
+
+    #[test]
+    fn test_is_metadata_endpoint_ipv6_uppercase() {
+        assert!(is_metadata_endpoint("metadata:FD00:EC2::254"));
+        assert!(is_metadata_endpoint("metadata:Fd00:Ec2::254"));
+    }
+
+    #[test]
+    fn test_is_metadata_endpoint_ipv6_bracket() {
+        assert!(is_metadata_endpoint("metadata:[fd00:ec2::254]"));
+        assert!(is_metadata_endpoint("metadata:[FD00:EC2::254]"));
+    }
+
+    #[test]
+    fn test_is_metadata_endpoint_gcp_domain() {
+        assert!(is_metadata_endpoint(
+            "metadata.google.internal:169.254.169.254"
+        ));
+        assert!(is_metadata_endpoint(
+            "metadata.google.internal.:169.254.169.254"
+        ));
+    }
+
+    #[test]
+    fn test_is_metadata_endpoint_aws_domain() {
+        assert!(is_metadata_endpoint(
+            "instance-data.ec2.internal:169.254.169.254"
+        ));
+        assert!(is_metadata_endpoint(
+            "instance-data.ec2.internal.:169.254.169.254"
+        ));
+    }
+
+    #[test]
+    fn test_is_metadata_endpoint_azure_domain() {
+        assert!(is_metadata_endpoint("metadata.azure.com:169.254.169.254"));
+        assert!(is_metadata_endpoint("metadata.azure.com.:169.254.169.254"));
+    }
+
+    #[test]
+    fn test_is_metadata_endpoint_domain_in_ip_part() {
+        // --add-host=myhost:metadata.google.internal のように IP 部分にドメイン名
+        assert!(is_metadata_endpoint("myhost:metadata.google.internal"));
+        assert!(is_metadata_endpoint("myhost:instance-data.ec2.internal"));
+        assert!(is_metadata_endpoint("myhost:metadata.azure.com"));
+    }
+
+    #[test]
+    fn test_is_metadata_endpoint_invalid_input() {
+        assert!(!is_metadata_endpoint(""));
+        assert!(!is_metadata_endpoint("justahostname"));
+        assert!(!is_metadata_endpoint("host:not-an-ip"));
+    }
+
+    #[test]
+    fn test_is_metadata_endpoint_bracket_mismatch() {
+        // 不正なブラケット形式はフォールバック
+        assert!(!is_metadata_endpoint("host:[incomplete"));
+        assert!(!is_metadata_endpoint("host:]reversed["));
     }
 }
