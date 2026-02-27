@@ -99,7 +99,7 @@
 - [ ] シンボリックリンク setup ヘルパーコマンド
 
 ### テスト・CI
-- [x] 多環境 smoke テスト（Linux glibc/musl, macOS Intel/Apple Silicon）
+- [x] 多環境 smoke テスト（Linux glibc/musl, macOS Apple Silicon）
 - [ ] 複数 Docker デーモン環境テスト（colima, orbstack）
 - [x] 大規模 compose ファイル（1000行超）のパフォーマンステスト
 - [x] MSRV (Minimum Supported Rust Version) CI チェック（Rust 1.88）
