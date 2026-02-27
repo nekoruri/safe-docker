@@ -1,3 +1,5 @@
+use std::net::{Ipv4Addr, Ipv6Addr};
+
 use crate::config::Config;
 use crate::docker_args::{DangerousFlag, DockerCommand, DockerSubcommand};
 use crate::hook::Decision;
@@ -17,6 +19,67 @@ fn is_dangerous_security_opt(opt: &str) -> bool {
         // CIS 5.2: SELinux ラベリングの無効化
         || opt.contains("label=disable")
         || opt.contains("label:disable")
+}
+
+/// クラウドメタデータエンドポイントの既知ドメイン名
+const METADATA_DOMAINS: &[&str] = &["metadata.google.internal", "metadata.google.internal."];
+
+/// --add-host の値がクラウドメタデータエンドポイントを指しているか判定
+///
+/// `host:ip` 形式をパースし、IP 部分について:
+/// - IPv4: パースして `169.254.169.254` と比較
+/// - IPv6: ブラケット除去 + 小文字正規化 + canonical 形式変換して `fd00:ec2::254` と比較
+/// - ドメイン名: `metadata.google.internal` 等をチェック
+fn is_metadata_endpoint(add_host_val: &str) -> bool {
+    // host:ip 形式でパース。IPv6 は host:[ip] や host:ip の形式がある
+    // ホスト名にはコロンが含まれないため、最初のコロンで分割する
+    let (host_part, ip_part) = if let Some(bracket_start) = add_host_val.find('[') {
+        // ブラケット形式: host:[::1] or [::1]
+        let host = add_host_val[..bracket_start].trim_end_matches(':');
+        let rest = &add_host_val[bracket_start..];
+        let ip = rest.trim_start_matches('[').trim_end_matches(']');
+        (host, ip)
+    } else {
+        // host:ip 形式 — 最初のコロンで分割（IPv6 はコロンを含むため）
+        match add_host_val.split_once(':') {
+            Some((host, ip)) => (host, ip),
+            None => ("", add_host_val),
+        }
+    };
+
+    let ip_lower = ip_part.to_lowercase();
+
+    // IPv4 チェック
+    if let Ok(addr) = ip_lower.parse::<Ipv4Addr>()
+        && addr == Ipv4Addr::new(169, 254, 169, 254)
+    {
+        return true;
+    }
+
+    // IPv6 チェック (canonical 形式で比較)
+    if let Ok(addr) = ip_lower.parse::<Ipv6Addr>() {
+        let target: Ipv6Addr = "fd00:ec2::254".parse().unwrap();
+        if addr == target {
+            return true;
+        }
+    }
+
+    // ドメイン名チェック (host 部分)
+    let host_lower = host_part.to_lowercase();
+    for domain in METADATA_DOMAINS {
+        if host_lower == *domain {
+            return true;
+        }
+    }
+
+    // IP 部分がドメイン名の場合もチェック (--add-host=myhost:metadata.google.internal)
+    for domain in METADATA_DOMAINS {
+        if ip_lower == *domain {
+            return true;
+        }
+    }
+
+    false
 }
 
 /// Docker コマンドに対してポリシーを適用し、最終的な Decision を返す
@@ -126,7 +189,7 @@ pub fn evaluate(cmd: &DockerCommand, config: &Config, cwd: &str) -> Decision {
                 }
             }
             DangerousFlag::AddHost(val) => {
-                if val.contains("169.254.169.254") || val.contains("fd00:ec2::254") {
+                if is_metadata_endpoint(val) {
                     ask_reasons.push(format!(
                         "--add-host {} points to the cloud metadata endpoint; this could be used for credential theft",
                         val
@@ -290,6 +353,31 @@ pub fn evaluate(cmd: &DockerCommand, config: &Config, cwd: &str) -> Decision {
                         val
                     ));
                 }
+            }
+            DangerousFlag::MountPropagation(mode) => {
+                deny_reasons.push(format!(
+                    "Compose: mount propagation '{}' is not allowed (may expose host mounts)",
+                    mode
+                ));
+            }
+            DangerousFlag::AddHost(val) => {
+                if is_metadata_endpoint(val) {
+                    ask_reasons.push(format!(
+                        "Compose: extra_hosts '{}' points to the cloud metadata endpoint; this could be used for credential theft",
+                        val
+                    ));
+                }
+            }
+            DangerousFlag::BuildArgSecret(val) => {
+                let display = if val.contains('=') {
+                    val.split('=').next().unwrap_or(val)
+                } else {
+                    val
+                };
+                ask_reasons.push(format!(
+                    "Compose: build arg '{}' appears to contain a secret; build args are visible in image layers",
+                    display
+                ));
             }
             _ => {}
         }

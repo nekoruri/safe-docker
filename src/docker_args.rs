@@ -242,6 +242,9 @@ fn is_secret_build_arg(arg: &str) -> bool {
         || key_upper.contains("API_KEY")
         || key_upper.contains("APIKEY")
         || key_upper.contains("CREDENTIAL")
+        || key_upper.ends_with("_KEY")
+        || key_upper.contains("_KEY_")
+        || key_upper == "KEY"
 }
 
 /// --secret / --ssh のカンマ区切りオプションからソースパスを抽出

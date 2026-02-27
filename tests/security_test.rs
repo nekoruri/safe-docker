@@ -923,6 +923,132 @@ fn test_deny_compose_env_file_outside_home() {
     assert_deny(&stdout, "compose env_file outside $HOME should deny");
 }
 
+// --- Phase 5d: --add-host IPv6 メタデータ E2E テスト ---
+
+#[test]
+fn test_ask_add_host_metadata_ipv6() {
+    let input = make_bash_input("docker run --add-host=metadata:fd00:ec2::254 ubuntu");
+    let (stdout, exit_code) = run_hook(&input);
+    assert_eq!(exit_code, 0);
+    assert_ask(&stdout, "--add-host with IPv6 metadata IP should ask");
+}
+
+#[test]
+fn test_ask_add_host_metadata_ipv6_uppercase() {
+    let input = make_bash_input("docker run --add-host=metadata:FD00:EC2::254 ubuntu");
+    let (stdout, exit_code) = run_hook(&input);
+    assert_eq!(exit_code, 0);
+    assert_ask(
+        &stdout,
+        "--add-host with uppercase IPv6 metadata IP should ask",
+    );
+}
+
+#[test]
+fn test_ask_add_host_metadata_ipv6_bracket() {
+    let input = make_bash_input("docker run --add-host=metadata:[fd00:ec2::254] ubuntu");
+    let (stdout, exit_code) = run_hook(&input);
+    assert_eq!(exit_code, 0);
+    assert_ask(
+        &stdout,
+        "--add-host with bracketed IPv6 metadata IP should ask",
+    );
+}
+
+#[test]
+fn test_ask_add_host_metadata_domain() {
+    let input =
+        make_bash_input("docker run --add-host=metadata.google.internal:169.254.169.254 ubuntu");
+    let (stdout, exit_code) = run_hook(&input);
+    assert_eq!(exit_code, 0);
+    assert_ask(
+        &stdout,
+        "--add-host with metadata.google.internal domain should ask",
+    );
+}
+
+// --- QOL-12: Compose IPC container/service namespace テスト ---
+
+#[test]
+fn test_deny_compose_ipc_container() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("compose.yml"),
+        "services:\n  web:\n    image: ubuntu\n    ipc: container:shm\n",
+    )
+    .unwrap();
+
+    let input = serde_json::json!({
+        "session_id": "test-session",
+        "hook_event_name": "PreToolUse",
+        "tool_name": "Bash",
+        "tool_input": {
+            "command": "docker compose up",
+            "description": "test"
+        },
+        "cwd": dir.path().to_str().unwrap()
+    })
+    .to_string();
+
+    let (stdout, exit_code) = run_hook(&input);
+    assert_eq!(exit_code, 0);
+    assert_deny(&stdout, "compose with ipc: container:shm");
+}
+
+#[test]
+fn test_deny_compose_ipc_service() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("compose.yml"),
+        "services:\n  web:\n    image: ubuntu\n    ipc: service:db\n",
+    )
+    .unwrap();
+
+    let input = serde_json::json!({
+        "session_id": "test-session",
+        "hook_event_name": "PreToolUse",
+        "tool_name": "Bash",
+        "tool_input": {
+            "command": "docker compose up",
+            "description": "test"
+        },
+        "cwd": dir.path().to_str().unwrap()
+    })
+    .to_string();
+
+    let (stdout, exit_code) = run_hook(&input);
+    assert_eq!(exit_code, 0);
+    assert_deny(&stdout, "compose with ipc: service:db");
+}
+
+// --- SEC-03: Compose extra_hosts メタデータ IP テスト ---
+
+#[test]
+fn test_ask_compose_extra_hosts_metadata() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("compose.yml"),
+        "services:\n  web:\n    image: ubuntu\n    extra_hosts:\n      - \"metadata:169.254.169.254\"\n",
+    )
+    .unwrap();
+
+    let input = serde_json::json!({
+        "session_id": "test-session",
+        "hook_event_name": "PreToolUse",
+        "tool_name": "Bash",
+        "tool_input": {
+            "command": "docker compose up",
+            "description": "test"
+        },
+        "cwd": dir.path().to_str().unwrap()
+    })
+    .to_string();
+
+    let (stdout, exit_code) = run_hook(&input);
+    assert_eq!(exit_code, 0);
+    assert_ask(&stdout, "compose extra_hosts with metadata IP should ask");
+}
+
 #[test]
 fn test_deny_compose_env_file_list_outside_home() {
     let dir = tempfile::tempdir().unwrap();

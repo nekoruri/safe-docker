@@ -210,6 +210,30 @@ fn extract_service_dangerous_settings(service: &serde_yml::Value, flags: &mut Ve
         }
     }
 
+    // extra_hosts: list or mapping format
+    if let Some(extra_hosts) = service.get("extra_hosts") {
+        match extra_hosts {
+            // List format: ["host:ip", ...]
+            serde_yml::Value::Sequence(seq) => {
+                for item in seq {
+                    if let Some(s) = item.as_str() {
+                        flags.push(DangerousFlag::AddHost(s.to_string()));
+                    }
+                }
+            }
+            // Mapping format: { host: ip, ... }
+            serde_yml::Value::Mapping(map) => {
+                for (key, value) in map {
+                    if let Some(host) = key.as_str() {
+                        let ip = value.as_str().map(|s| s.to_string()).unwrap_or_default();
+                        flags.push(DangerousFlag::AddHost(format!("{}:{}", host, ip)));
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
     // sysctls: list or mapping format
     if let Some(sysctls) = service.get("sysctls") {
         match sysctls {
