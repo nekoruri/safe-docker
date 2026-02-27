@@ -60,7 +60,7 @@ src/
 ├── config.rs          # TOML 設定ファイルの読み込み（[wrapper] セクション含む）
 ├── audit.rs           # 監査ログ（JSONL / OTLP）※両モード共通、mode フィールドで区別
 ├── error.rs           # エラー型定義
-└── test_utils.rs      # テスト用ユーティリティ（TempEnvVar, ENV_MUTEX）※#[cfg(test)]
+└── test_utils.rs      # テスト用ユーティリティ（TempEnvVar, EnvLock, env_lock）※#[cfg(test)]
 
 tests/
 ├── integration_test.rs    # Hook モードの E2E テスト（stdin/stdout）
@@ -133,9 +133,9 @@ OS 引数 → wrapper::run()
 - **統合テスト**: `tests/integration_test.rs` — バイナリを実際に起動して stdin/stdout で検証
 - **セキュリティテスト**: `tests/security_test.rs` — バイパスパターンの検出を検証
 - **DockerCommand 構造体**: テストで構築する際は `host_paths: vec![]` を忘れずに
-- **環境変数を操作するテスト**: `test_utils::TempEnvVar` と `ENV_MUTEX` を使うこと。`unsafe { std::env::set_var() }` を直接呼ばない
+- **環境変数を操作するテスト**: `test_utils::TempEnvVar` と `env_lock()` を使うこと。`unsafe { std::env::set_var() }` を直接呼ばない
   ```rust
-  use crate::test_utils::{TempEnvVar, ENV_MUTEX};
-  let _lock = ENV_MUTEX.lock().unwrap();
-  let _env = TempEnvVar::set("MY_VAR", "value");  // Drop 時に自動復元
+  use crate::test_utils::{TempEnvVar, env_lock};
+  let lock = env_lock();
+  let _env = TempEnvVar::set(&lock, "MY_VAR", "value");  // Drop 時に自動復元
   ```

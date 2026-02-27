@@ -8,6 +8,8 @@ safe-docker はセキュリティツールのため、変更の手順漏れが�
 ```bash
 # pre-commit hook の有効化（cargo fmt を自動チェック）
 git config core.hooksPath scripts
+# スクリプトに実行権限を付与（"permission denied" エラーが出る場合）
+chmod +x scripts/pre-commit
 
 # ビルド
 cargo build --release

@@ -28,7 +28,10 @@ pub struct AuditEvent {
     pub environment: String,
     /// 実行モード ("hook" or "wrapper")
     pub mode: String,
-    /// 使用された設定ソース（ファイルパスまたは "(default)"）
+    /// 使用された設定ソース。
+    /// - ファイルパス（例: "/home/user/.config/safe-docker/config.toml"）
+    /// - "(default)" — 設定ファイルなしでデフォルトを使用
+    /// - "{path} (FAILED, using defaults)" — 設定ファイルのパース失敗時
     #[serde(skip_serializing_if = "Option::is_none")]
     pub config_source: Option<String>,
 }
@@ -70,25 +73,31 @@ pub fn is_enabled(config: &AuditConfig) -> bool {
     config.enabled || std::env::var("SAFE_DOCKER_AUDIT").is_ok_and(|v| v == "1")
 }
 
+/// 監査イベント構築のコンテキスト情報
+pub struct AuditContext<'a> {
+    pub command: &'a str,
+    pub decision: &'a str,
+    pub reason: Option<&'a str>,
+    pub collector: &'a AuditCollector,
+    pub session_id: Option<&'a str>,
+    pub cwd: &'a str,
+    pub mode: &'a str,
+    /// 使用された設定ソース。
+    /// - ファイルパス（例: "/home/user/.config/safe-docker/config.toml"）
+    /// - "(default)" — 設定ファイルなしでデフォルトを使用
+    /// - "{path} (FAILED, using defaults)" — 設定ファイルのパース失敗時
+    pub config_source: Option<&'a str>,
+}
+
 /// 監査イベントを構築する
-#[allow(clippy::too_many_arguments)]
-pub fn build_event(
-    command: &str,
-    decision: &str,
-    reason: Option<&str>,
-    collector: &AuditCollector,
-    session_id: Option<&str>,
-    cwd: &str,
-    mode: &str,
-    config_source: Option<&str>,
-) -> AuditEvent {
+pub fn build_event(ctx: &AuditContext<'_>) -> AuditEvent {
     let timestamp_unix_nano = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_nanos() as u64;
 
-    let docker_subcommand = collector.docker_subcommands.first().cloned();
-    let docker_image = collector.images.first().cloned();
+    let docker_subcommand = ctx.collector.docker_subcommands.first().cloned();
+    let docker_image = ctx.collector.images.first().cloned();
 
     let host_name = gethostname::gethostname().to_string_lossy().to_string();
 
@@ -97,20 +106,20 @@ pub fn build_event(
 
     AuditEvent {
         timestamp_unix_nano,
-        session_id: session_id.map(String::from),
-        command: command.to_string(),
-        decision: decision.to_string(),
-        reason: reason.map(String::from),
+        session_id: ctx.session_id.map(String::from),
+        command: ctx.command.to_string(),
+        decision: ctx.decision.to_string(),
+        reason: ctx.reason.map(String::from),
         docker_subcommand,
         docker_image,
-        bind_mounts: collector.bind_mounts.clone(),
-        dangerous_flags: collector.dangerous_flags.clone(),
-        cwd: cwd.to_string(),
+        bind_mounts: ctx.collector.bind_mounts.clone(),
+        dangerous_flags: ctx.collector.dangerous_flags.clone(),
+        cwd: ctx.cwd.to_string(),
         pid: std::process::id(),
         host_name,
         environment,
-        mode: mode.to_string(),
-        config_source: config_source.map(String::from),
+        mode: ctx.mode.to_string(),
+        config_source: ctx.config_source.map(String::from),
     }
 }
 
@@ -349,12 +358,12 @@ mod tests {
     use crate::docker_args::{
         BindMount, DangerousFlag, DockerCommand, DockerSubcommand, MountSource,
     };
-    use crate::test_utils::{ENV_MUTEX, TempEnvVar};
+    use crate::test_utils::{TempEnvVar, env_lock};
 
     #[test]
     fn test_is_enabled_config() {
-        let _lock = ENV_MUTEX.lock().unwrap();
-        let _env = TempEnvVar::remove("SAFE_DOCKER_AUDIT");
+        let lock = env_lock();
+        let _env = TempEnvVar::remove(&lock, "SAFE_DOCKER_AUDIT");
 
         let mut config = AuditConfig::default();
         assert!(!is_enabled(&config));
@@ -365,8 +374,8 @@ mod tests {
 
     #[test]
     fn test_is_enabled_env_var() {
-        let _lock = ENV_MUTEX.lock().unwrap();
-        let _env = TempEnvVar::set("SAFE_DOCKER_AUDIT", "1");
+        let lock = env_lock();
+        let _env = TempEnvVar::set(&lock, "SAFE_DOCKER_AUDIT", "1");
 
         let config = AuditConfig::default();
         assert!(is_enabled(&config));
@@ -374,8 +383,8 @@ mod tests {
 
     #[test]
     fn test_is_enabled_env_var_not_one() {
-        let _lock = ENV_MUTEX.lock().unwrap();
-        let _env = TempEnvVar::set("SAFE_DOCKER_AUDIT", "0");
+        let lock = env_lock();
+        let _env = TempEnvVar::set(&lock, "SAFE_DOCKER_AUDIT", "0");
 
         let config = AuditConfig::default();
         assert!(!is_enabled(&config));
@@ -384,16 +393,16 @@ mod tests {
     #[test]
     fn test_build_event_basic() {
         let collector = AuditCollector::new();
-        let event = build_event(
-            "docker run ubuntu",
-            "allow",
-            None,
-            &collector,
-            Some("session-123"),
-            "/home/user/project",
-            "hook",
-            None,
-        );
+        let event = build_event(&AuditContext {
+            command: "docker run ubuntu",
+            decision: "allow",
+            reason: None,
+            collector: &collector,
+            session_id: Some("session-123"),
+            cwd: "/home/user/project",
+            mode: "hook",
+            config_source: None,
+        });
 
         assert_eq!(event.command, "docker run ubuntu");
         assert_eq!(event.decision, "allow");
@@ -410,16 +419,16 @@ mod tests {
     #[test]
     fn test_build_event_wrapper_mode() {
         let collector = AuditCollector::new();
-        let event = build_event(
-            "docker run ubuntu",
-            "allow",
-            None,
-            &collector,
-            None,
-            "/home/user/project",
-            "wrapper",
-            Some("/home/user/.config/safe-docker/config.toml"),
-        );
+        let event = build_event(&AuditContext {
+            command: "docker run ubuntu",
+            decision: "allow",
+            reason: None,
+            collector: &collector,
+            session_id: None,
+            cwd: "/home/user/project",
+            mode: "wrapper",
+            config_source: Some("/home/user/.config/safe-docker/config.toml"),
+        });
 
         assert_eq!(event.mode, "wrapper");
         assert_eq!(
@@ -435,16 +444,16 @@ mod tests {
         let path_str = path.to_str().unwrap();
 
         let collector = AuditCollector::new();
-        let event = build_event(
-            "docker ps",
-            "allow",
-            None,
-            &collector,
-            None,
-            "/tmp",
-            "wrapper",
-            None,
-        );
+        let event = build_event(&AuditContext {
+            command: "docker ps",
+            decision: "allow",
+            reason: None,
+            collector: &collector,
+            session_id: None,
+            cwd: "/tmp",
+            mode: "wrapper",
+            config_source: None,
+        });
 
         write_jsonl(&event, path_str);
 
@@ -456,16 +465,16 @@ mod tests {
     #[test]
     fn test_build_event_with_reason() {
         let collector = AuditCollector::new();
-        let event = build_event(
-            "docker run --privileged ubuntu",
-            "deny",
-            Some("--privileged is not allowed"),
-            &collector,
-            None,
-            "/tmp",
-            "hook",
-            None,
-        );
+        let event = build_event(&AuditContext {
+            command: "docker run --privileged ubuntu",
+            decision: "deny",
+            reason: Some("--privileged is not allowed"),
+            collector: &collector,
+            session_id: None,
+            cwd: "/tmp",
+            mode: "hook",
+            config_source: None,
+        });
 
         assert_eq!(event.decision, "deny");
         assert_eq!(event.reason.as_deref(), Some("--privileged is not allowed"));
@@ -553,16 +562,16 @@ mod tests {
         };
         collector.record_docker_command(&cmd);
 
-        let event = build_event(
-            "docker run --privileged --cap-add SYS_ADMIN -v /etc:/data nginx:latest",
-            "deny",
-            Some("multiple issues"),
-            &collector,
-            Some("sess-456"),
-            "/home/user",
-            "hook",
-            None,
-        );
+        let event = build_event(&AuditContext {
+            command: "docker run --privileged --cap-add SYS_ADMIN -v /etc:/data nginx:latest",
+            decision: "deny",
+            reason: Some("multiple issues"),
+            collector: &collector,
+            session_id: Some("sess-456"),
+            cwd: "/home/user",
+            mode: "hook",
+            config_source: None,
+        });
 
         assert_eq!(event.docker_subcommand.as_deref(), Some("run"));
         assert_eq!(event.docker_image.as_deref(), Some("nginx:latest"));
@@ -580,16 +589,16 @@ mod tests {
         let path_str = path.to_str().unwrap();
 
         let collector = AuditCollector::new();
-        let event = build_event(
-            "docker run ubuntu",
-            "allow",
-            None,
-            &collector,
-            None,
-            "/tmp",
-            "hook",
-            None,
-        );
+        let event = build_event(&AuditContext {
+            command: "docker run ubuntu",
+            decision: "allow",
+            reason: None,
+            collector: &collector,
+            session_id: None,
+            cwd: "/tmp",
+            mode: "hook",
+            config_source: None,
+        });
 
         write_jsonl(&event, path_str);
 
@@ -610,26 +619,26 @@ mod tests {
         let path_str = path.to_str().unwrap();
 
         let collector = AuditCollector::new();
-        let event1 = build_event(
-            "docker run ubuntu",
-            "allow",
-            None,
-            &collector,
-            None,
-            "/tmp",
-            "hook",
-            None,
-        );
-        let event2 = build_event(
-            "docker run --privileged ubuntu",
-            "deny",
-            Some("not allowed"),
-            &collector,
-            None,
-            "/tmp",
-            "hook",
-            None,
-        );
+        let event1 = build_event(&AuditContext {
+            command: "docker run ubuntu",
+            decision: "allow",
+            reason: None,
+            collector: &collector,
+            session_id: None,
+            cwd: "/tmp",
+            mode: "hook",
+            config_source: None,
+        });
+        let event2 = build_event(&AuditContext {
+            command: "docker run --privileged ubuntu",
+            decision: "deny",
+            reason: Some("not allowed"),
+            collector: &collector,
+            session_id: None,
+            cwd: "/tmp",
+            mode: "hook",
+            config_source: None,
+        });
 
         write_jsonl(&event1, path_str);
         write_jsonl(&event2, path_str);
@@ -646,16 +655,16 @@ mod tests {
         let path_str = path.to_str().unwrap();
 
         let collector = AuditCollector::new();
-        let event = build_event(
-            "docker ps",
-            "allow",
-            None,
-            &collector,
-            None,
-            "/tmp",
-            "hook",
-            None,
-        );
+        let event = build_event(&AuditContext {
+            command: "docker ps",
+            decision: "allow",
+            reason: None,
+            collector: &collector,
+            session_id: None,
+            cwd: "/tmp",
+            mode: "hook",
+            config_source: None,
+        });
 
         write_jsonl(&event, path_str);
 
@@ -675,16 +684,16 @@ mod tests {
         };
 
         let collector = AuditCollector::new();
-        let event = build_event(
-            "docker run alpine",
-            "allow",
-            None,
-            &collector,
-            None,
-            "/tmp",
-            "hook",
-            None,
-        );
+        let event = build_event(&AuditContext {
+            command: "docker run alpine",
+            decision: "allow",
+            reason: None,
+            collector: &collector,
+            session_id: None,
+            cwd: "/tmp",
+            mode: "hook",
+            config_source: None,
+        });
 
         emit(&event, &config);
 
@@ -707,16 +716,16 @@ mod tests {
     #[test]
     fn test_event_serialization() {
         let collector = AuditCollector::new();
-        let event = build_event(
-            "docker ps",
-            "allow",
-            None,
-            &collector,
-            None,
-            "/tmp",
-            "hook",
-            None,
-        );
+        let event = build_event(&AuditContext {
+            command: "docker ps",
+            decision: "allow",
+            reason: None,
+            collector: &collector,
+            session_id: None,
+            cwd: "/tmp",
+            mode: "hook",
+            config_source: None,
+        });
 
         let json = serde_json::to_string(&event).unwrap();
         // None フィールドはスキップされること
@@ -759,16 +768,16 @@ mod tests {
             };
             collector.record_docker_command(&cmd);
 
-            let event = build_event(
-                "docker run --privileged -v /etc:/data ubuntu",
-                "deny",
-                Some("--privileged is not allowed"),
-                &collector,
-                Some("session-otlp"),
-                "/home/user",
-                "hook",
-                None,
-            );
+            let event = build_event(&AuditContext {
+                command: "docker run --privileged -v /etc:/data ubuntu",
+                decision: "deny",
+                reason: Some("--privileged is not allowed"),
+                collector: &collector,
+                session_id: Some("session-otlp"),
+                cwd: "/home/user",
+                mode: "hook",
+                config_source: None,
+            });
 
             write_otlp(&event, path_str);
 
@@ -805,16 +814,16 @@ mod tests {
             };
 
             let collector = AuditCollector::new();
-            let event = build_event(
-                "docker run alpine",
-                "allow",
-                None,
-                &collector,
-                None,
-                "/tmp",
-                "hook",
-                None,
-            );
+            let event = build_event(&AuditContext {
+                command: "docker run alpine",
+                decision: "allow",
+                reason: None,
+                collector: &collector,
+                session_id: None,
+                cwd: "/tmp",
+                mode: "hook",
+                config_source: None,
+            });
 
             emit(&event, &config);
 
@@ -835,16 +844,16 @@ mod tests {
             };
 
             let collector = AuditCollector::new();
-            let event = build_event(
-                "docker ps",
-                "allow",
-                None,
-                &collector,
-                None,
-                "/tmp",
-                "hook",
-                None,
-            );
+            let event = build_event(&AuditContext {
+                command: "docker ps",
+                decision: "allow",
+                reason: None,
+                collector: &collector,
+                session_id: None,
+                cwd: "/tmp",
+                mode: "hook",
+                config_source: None,
+            });
 
             emit(&event, &config);
 
