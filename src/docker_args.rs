@@ -2000,4 +2000,366 @@ mod tests {
         let non_context_paths: Vec<_> = cmd.host_paths.iter().filter(|p| *p != ".").collect();
         assert!(non_context_paths.is_empty());
     }
+
+    // --- is_flag_with_value() リグレッション防止テスト ---
+    //
+    // is_flag_with_value() に漏れがあると、フラグの値が後続の引数として
+    // 誤認され、危険フラグの検出が失敗する。
+    // 各フラグについて「フラグ + 値 + --privileged」の組み合わせで
+    // --privileged が確実に検出されることを検証する。
+
+    /// is_flag_with_value() 内のフラグと値の後に --privileged を配置し、
+    /// --privileged が検出されることを確認するヘルパー
+    fn assert_privileged_detected_after_flag(flag: &str, value: &str) {
+        let args = vec!["run", flag, value, "--privileged", "ubuntu"];
+        let cmd = parse_docker_args(&args);
+        assert!(
+            cmd.dangerous_flags
+                .iter()
+                .any(|f| matches!(f, DangerousFlag::Privileged)),
+            "--privileged should be detected after '{}' '{}', but got: {:?}",
+            flag,
+            value,
+            cmd.dangerous_flags
+        );
+    }
+
+    #[test]
+    fn test_flag_with_value_env() {
+        assert_privileged_detected_after_flag("-e", "FOO=bar");
+        assert_privileged_detected_after_flag("--env", "FOO=bar");
+    }
+
+    #[test]
+    fn test_flag_with_value_name() {
+        assert_privileged_detected_after_flag("--name", "mycontainer");
+    }
+
+    #[test]
+    fn test_flag_with_value_workdir() {
+        assert_privileged_detected_after_flag("-w", "/app");
+        assert_privileged_detected_after_flag("--workdir", "/app");
+    }
+
+    #[test]
+    fn test_flag_with_value_publish() {
+        assert_privileged_detected_after_flag("-p", "8080:80");
+        assert_privileged_detected_after_flag("--publish", "8080:80");
+    }
+
+    #[test]
+    fn test_flag_with_value_label() {
+        assert_privileged_detected_after_flag("-l", "app=web");
+        assert_privileged_detected_after_flag("--label", "app=web");
+    }
+
+    #[test]
+    fn test_flag_with_value_hostname() {
+        assert_privileged_detected_after_flag("--hostname", "myhost");
+        assert_privileged_detected_after_flag("-h", "myhost");
+    }
+
+    #[test]
+    fn test_flag_with_value_user() {
+        assert_privileged_detected_after_flag("-u", "1000");
+        assert_privileged_detected_after_flag("--user", "root");
+    }
+
+    #[test]
+    fn test_flag_with_value_entrypoint() {
+        assert_privileged_detected_after_flag("--entrypoint", "/bin/sh");
+    }
+
+    #[test]
+    fn test_flag_with_value_restart() {
+        assert_privileged_detected_after_flag("--restart", "always");
+    }
+
+    #[test]
+    fn test_flag_with_value_memory() {
+        assert_privileged_detected_after_flag("-m", "512m");
+        assert_privileged_detected_after_flag("--memory", "1g");
+    }
+
+    #[test]
+    fn test_flag_with_value_cpus() {
+        assert_privileged_detected_after_flag("--cpus", "2.0");
+    }
+
+    #[test]
+    fn test_flag_with_value_log() {
+        assert_privileged_detected_after_flag("--log-driver", "json-file");
+        assert_privileged_detected_after_flag("--log-opt", "max-size=10m");
+    }
+
+    #[test]
+    fn test_flag_with_value_network() {
+        // --network with non-host value should skip value, detect --privileged
+        let args = vec!["run", "--network", "bridge", "--privileged", "ubuntu"];
+        let cmd = parse_docker_args(&args);
+        assert!(
+            cmd.dangerous_flags
+                .iter()
+                .any(|f| matches!(f, DangerousFlag::Privileged))
+        );
+    }
+
+    #[test]
+    fn test_flag_with_value_dns() {
+        assert_privileged_detected_after_flag("--dns", "8.8.8.8");
+    }
+
+    #[test]
+    fn test_flag_with_value_tmpfs() {
+        assert_privileged_detected_after_flag("--tmpfs", "/run");
+    }
+
+    #[test]
+    fn test_flag_with_value_shm_size() {
+        assert_privileged_detected_after_flag("--shm-size", "2g");
+    }
+
+    #[test]
+    fn test_flag_with_value_ulimit() {
+        assert_privileged_detected_after_flag("--ulimit", "nofile=1024:1024");
+    }
+
+    #[test]
+    fn test_flag_with_value_platform() {
+        assert_privileged_detected_after_flag("--platform", "linux/amd64");
+    }
+
+    #[test]
+    fn test_flag_with_value_pull() {
+        assert_privileged_detected_after_flag("--pull", "always");
+    }
+
+    #[test]
+    fn test_flag_with_value_volumes_from() {
+        assert_privileged_detected_after_flag("--volumes-from", "container1");
+    }
+
+    #[test]
+    fn test_flag_with_value_runtime() {
+        assert_privileged_detected_after_flag("--runtime", "nvidia");
+    }
+
+    #[test]
+    fn test_flag_with_value_cgroup_parent() {
+        assert_privileged_detected_after_flag("--cgroup-parent", "/my/cgroup");
+    }
+
+    #[test]
+    fn test_flag_with_value_cidfile() {
+        assert_privileged_detected_after_flag("--cidfile", "/tmp/cid");
+    }
+
+    #[test]
+    fn test_flag_with_value_mac_address() {
+        assert_privileged_detected_after_flag("--mac-address", "92:d0:c6:0a:29:33");
+    }
+
+    #[test]
+    fn test_flag_with_value_storage_opt() {
+        assert_privileged_detected_after_flag("--storage-opt", "size=120G");
+    }
+
+    #[test]
+    fn test_flag_with_value_gpus() {
+        assert_privileged_detected_after_flag("--gpus", "all");
+    }
+
+    #[test]
+    fn test_flag_with_value_attach() {
+        assert_privileged_detected_after_flag("-a", "stdin");
+        assert_privileged_detected_after_flag("--attach", "stdout");
+    }
+
+    #[test]
+    fn test_flag_with_value_link() {
+        assert_privileged_detected_after_flag("--link", "db:database");
+    }
+
+    #[test]
+    fn test_flag_with_value_env_file() {
+        assert_privileged_detected_after_flag("--env-file", "/tmp/.env");
+    }
+
+    #[test]
+    fn test_flag_with_value_cpu_shares() {
+        assert_privileged_detected_after_flag("-c", "512");
+        assert_privileged_detected_after_flag("--cpu-shares", "512");
+    }
+
+    #[test]
+    fn test_flag_with_value_cpuset() {
+        assert_privileged_detected_after_flag("--cpuset-cpus", "0-3");
+        assert_privileged_detected_after_flag("--cpuset-mems", "0");
+    }
+
+    #[test]
+    fn test_flag_with_value_resource_limits() {
+        assert_privileged_detected_after_flag("--cpu-period", "100000");
+        assert_privileged_detected_after_flag("--cpu-quota", "50000");
+        assert_privileged_detected_after_flag("--memory-swap", "1g");
+        assert_privileged_detected_after_flag("--memory-reservation", "512m");
+        assert_privileged_detected_after_flag("--pids-limit", "100");
+    }
+
+    #[test]
+    fn test_flag_with_value_misc() {
+        assert_privileged_detected_after_flag("--group-add", "video");
+        assert_privileged_detected_after_flag("--domainname", "example.com");
+        assert_privileged_detected_after_flag("--oom-score-adj", "100");
+        assert_privileged_detected_after_flag("--isolation", "process");
+        assert_privileged_detected_after_flag("--ip6", "::1");
+        assert_privileged_detected_after_flag("--dns-search", "example.com");
+        assert_privileged_detected_after_flag("--dns-option", "ndots:5");
+    }
+
+    #[test]
+    fn test_flag_with_value_expose() {
+        assert_privileged_detected_after_flag("--expose", "8080");
+    }
+
+    #[test]
+    fn test_flag_with_value_ip() {
+        assert_privileged_detected_after_flag("--ip", "172.17.0.2");
+    }
+
+    #[test]
+    fn test_flag_with_value_stop() {
+        assert_privileged_detected_after_flag("--stop-signal", "SIGTERM");
+        assert_privileged_detected_after_flag("--stop-timeout", "30");
+    }
+
+    #[test]
+    fn test_flag_with_value_health() {
+        assert_privileged_detected_after_flag("--health-cmd", "curl -f http://localhost/");
+        assert_privileged_detected_after_flag("--health-interval", "30s");
+        assert_privileged_detected_after_flag("--health-retries", "3");
+        assert_privileged_detected_after_flag("--health-start-period", "5s");
+        assert_privileged_detected_after_flag("--health-timeout", "10s");
+    }
+
+    #[test]
+    fn test_flag_with_value_memory_swappiness() {
+        assert_privileged_detected_after_flag("--memory-swappiness", "60");
+    }
+
+    #[test]
+    fn test_flag_with_value_kernel_memory() {
+        assert_privileged_detected_after_flag("--kernel-memory", "256m");
+    }
+
+    #[test]
+    fn test_flag_with_value_device_cgroup() {
+        assert_privileged_detected_after_flag("--device-cgroup-rule", "c 42:* rmw");
+    }
+
+    #[test]
+    fn test_flag_with_value_device_io() {
+        assert_privileged_detected_after_flag("--device-read-bps", "/dev/sda:1mb");
+        assert_privileged_detected_after_flag("--device-write-bps", "/dev/sda:1mb");
+        assert_privileged_detected_after_flag("--device-read-iops", "/dev/sda:1000");
+        assert_privileged_detected_after_flag("--device-write-iops", "/dev/sda:1000");
+    }
+
+    #[test]
+    fn test_flag_with_value_blkio() {
+        assert_privileged_detected_after_flag("--blkio-weight", "500");
+        assert_privileged_detected_after_flag("--blkio-weight-device", "/dev/sda:200");
+    }
+
+    #[test]
+    fn test_flag_with_value_volume_driver() {
+        assert_privileged_detected_after_flag("--volume-driver", "local");
+    }
+
+    #[test]
+    fn test_flag_with_value_label_file() {
+        assert_privileged_detected_after_flag("--label-file", "/tmp/labels.txt");
+    }
+
+    #[test]
+    fn test_flag_with_value_network_alias() {
+        assert_privileged_detected_after_flag("--network-alias", "myalias");
+    }
+
+    // --- 複合フラグの組み合わせテスト ---
+
+    #[test]
+    fn test_compound_flags_short_and_long() {
+        // 短形式と長形式を混在させても全てのフラグが正しく認識される
+        let args = vec![
+            "run",
+            "-e",
+            "FOO=bar",
+            "--name",
+            "mycontainer",
+            "-p",
+            "8080:80",
+            "-v",
+            "/etc:/data",
+            "--privileged",
+            "ubuntu",
+        ];
+        let cmd = parse_docker_args(&args);
+        assert!(
+            cmd.dangerous_flags
+                .iter()
+                .any(|f| matches!(f, DangerousFlag::Privileged))
+        );
+        assert_eq!(cmd.bind_mounts.len(), 1);
+        assert_eq!(cmd.bind_mounts[0].host_path, "/etc");
+    }
+
+    #[test]
+    fn test_compound_many_flags_before_dangerous() {
+        // 多数の値付きフラグの後に危険フラグがあっても検出される
+        // --network bridge (スペース区切り) を使い、値消費の回帰を検証する
+        let args = vec![
+            "run",
+            "-e",
+            "A=1",
+            "-e",
+            "B=2",
+            "-l",
+            "x=y",
+            "--name",
+            "c",
+            "-w",
+            "/app",
+            "-u",
+            "1000",
+            "--restart",
+            "always",
+            "--log-driver",
+            "json-file",
+            "--network",
+            "bridge",
+            "--privileged",
+            "ubuntu",
+        ];
+        let cmd = parse_docker_args(&args);
+        assert!(
+            cmd.dangerous_flags
+                .iter()
+                .any(|f| matches!(f, DangerousFlag::Privileged)),
+            "--privileged should be detected after many flags with space-separated values: {:?}",
+            cmd.dangerous_flags
+        );
+    }
+
+    #[test]
+    fn test_equals_form_does_not_consume_next_arg() {
+        // --network=bridge は値が = で結合されているので次の引数を消費しない
+        let args = vec!["run", "--network=bridge", "--privileged", "ubuntu"];
+        let cmd = parse_docker_args(&args);
+        assert!(
+            cmd.dangerous_flags
+                .iter()
+                .any(|f| matches!(f, DangerousFlag::Privileged))
+        );
+    }
 }
