@@ -1212,7 +1212,13 @@ fn test_wrapper_config_parse_failure_warning() {
 
 // --- Phase 5b: Compose env_file ---
 
-/// 環境変数付きで CWD を指定してラッパーモードを実行
+/// 設定ファイル指定付きでラッパーモードを実行
+fn run_wrapper_with_config(args: &[&str], config_path: &std::path::Path) -> (String, String, i32) {
+    let config_str = config_path.to_string_lossy();
+    run_wrapper_with_env(args, &[("SAFE_DOCKER_CONFIG", &config_str)])
+}
+
+/// CWD を指定してラッパーモードを実行
 fn run_wrapper_in_dir(args: &[&str], cwd: &std::path::Path) -> (String, String, i32) {
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_safe-docker"));
     for arg in args {
@@ -1270,6 +1276,128 @@ fn test_wrapper_deny_compose_env_file_relative() {
     assert_eq!(
         exit_code, 1,
         "env_file resolved outside $HOME should deny: {}",
+        stderr
+    );
+}
+
+// --- 非対話環境テスト: config の non_interactive_ask ---
+
+#[test]
+fn test_wrapper_config_non_interactive_ask_allow() {
+    // config で non_interactive_ask = "allow" を設定
+    let dir = tempfile::tempdir().unwrap();
+    let config_path = dir.path().join("config.toml");
+    std::fs::write(
+        &config_path,
+        r#"
+[wrapper]
+non_interactive_ask = "allow"
+"#,
+    )
+    .unwrap();
+
+    let mount_arg = format!("{}/.ssh:/keys", home_dir());
+    let (stdout, stderr, exit_code) =
+        run_wrapper_with_config(&["run", "-v", &mount_arg, "ubuntu"], &config_path);
+    assert_eq!(
+        exit_code, 0,
+        "config non_interactive_ask=allow should proceed, stderr: {}",
+        stderr
+    );
+    assert!(
+        stderr.contains("Non-interactive: proceeding"),
+        "Expected non-interactive allow message from config, got stderr: {}",
+        stderr
+    );
+    assert!(
+        stdout.contains("run"),
+        "Expected docker execution, got stdout: {}",
+        stdout
+    );
+}
+
+#[test]
+fn test_wrapper_config_non_interactive_ask_deny() {
+    // config で non_interactive_ask = "deny" を設定（デフォルト）
+    let dir = tempfile::tempdir().unwrap();
+    let config_path = dir.path().join("config.toml");
+    std::fs::write(
+        &config_path,
+        r#"
+[wrapper]
+non_interactive_ask = "deny"
+"#,
+    )
+    .unwrap();
+
+    let mount_arg = format!("{}/.ssh:/keys", home_dir());
+    let (_, stderr, exit_code) =
+        run_wrapper_with_config(&["run", "-v", &mount_arg, "ubuntu"], &config_path);
+    assert_eq!(
+        exit_code, 1,
+        "config non_interactive_ask=deny should block, stderr: {}",
+        stderr
+    );
+    assert!(
+        stderr.contains("Non-interactive: blocked"),
+        "Expected non-interactive deny message from config, got stderr: {}",
+        stderr
+    );
+}
+
+#[test]
+fn test_wrapper_env_var_overrides_config_non_interactive_ask() {
+    // config で deny だが SAFE_DOCKER_ASK=allow で上書き
+    let dir = tempfile::tempdir().unwrap();
+    let config_path = dir.path().join("config.toml");
+    std::fs::write(
+        &config_path,
+        r#"
+[wrapper]
+non_interactive_ask = "deny"
+"#,
+    )
+    .unwrap();
+
+    let mount_arg = format!("{}/.ssh:/keys", home_dir());
+    let config_str = config_path.to_string_lossy();
+    let (_, stderr, exit_code) = run_wrapper_with_env(
+        &["run", "-v", &mount_arg, "ubuntu"],
+        &[
+            ("SAFE_DOCKER_ASK", "allow"),
+            ("SAFE_DOCKER_CONFIG", &config_str),
+        ],
+    );
+    assert_eq!(
+        exit_code, 0,
+        "SAFE_DOCKER_ASK=allow should override config deny, stderr: {}",
+        stderr
+    );
+    assert!(
+        stderr.contains("Non-interactive: proceeding"),
+        "Expected env var to override config, got stderr: {}",
+        stderr
+    );
+}
+
+#[test]
+fn test_wrapper_non_interactive_default_is_deny() {
+    // SAFE_DOCKER_ASK 未設定、config にも non_interactive_ask なし → デフォルト deny
+    // 空の config を明示的に指定して環境からの SAFE_DOCKER_CONFIG 継承を防ぐ
+    let dir = tempfile::tempdir().unwrap();
+    let config_path = dir.path().join("empty.toml");
+    std::fs::write(&config_path, "").unwrap();
+    let mount_arg = format!("{}/.ssh:/keys", home_dir());
+    let (_, stderr, exit_code) =
+        run_wrapper_with_config(&["run", "-v", &mount_arg, "ubuntu"], &config_path);
+    assert_eq!(
+        exit_code, 1,
+        "Default non-interactive should deny, stderr: {}",
+        stderr
+    );
+    assert!(
+        stderr.contains("Non-interactive: blocked"),
+        "Expected non-interactive blocked message, got stderr: {}",
         stderr
     );
 }
