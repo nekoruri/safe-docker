@@ -742,6 +742,241 @@ mod tests {
         assert!(json.contains("\"environment\""));
     }
 
+    // --- SAFE_DOCKER_ENV 環境変数テスト ---
+
+    #[test]
+    fn test_build_event_environment_custom() {
+        let lock = env_lock();
+        let _env = TempEnvVar::set(&lock, "SAFE_DOCKER_ENV", "production");
+
+        let collector = AuditCollector::new();
+        let event = build_event(&AuditContext {
+            command: "docker ps",
+            decision: "allow",
+            reason: None,
+            collector: &collector,
+            session_id: None,
+            cwd: "/tmp",
+            mode: "hook",
+            config_source: None,
+        });
+
+        assert_eq!(event.environment, "production");
+    }
+
+    #[test]
+    fn test_build_event_environment_default() {
+        let lock = env_lock();
+        let _env = TempEnvVar::remove(&lock, "SAFE_DOCKER_ENV");
+
+        let collector = AuditCollector::new();
+        let event = build_event(&AuditContext {
+            command: "docker ps",
+            decision: "allow",
+            reason: None,
+            collector: &collector,
+            session_id: None,
+            cwd: "/tmp",
+            mode: "hook",
+            config_source: None,
+        });
+
+        assert_eq!(event.environment, "development");
+    }
+
+    // --- config_source フィールドテスト ---
+
+    #[test]
+    fn test_build_event_config_source_default() {
+        let collector = AuditCollector::new();
+        let event = build_event(&AuditContext {
+            command: "docker ps",
+            decision: "allow",
+            reason: None,
+            collector: &collector,
+            session_id: None,
+            cwd: "/tmp",
+            mode: "hook",
+            config_source: Some("(default)"),
+        });
+
+        assert_eq!(event.config_source.as_deref(), Some("(default)"));
+    }
+
+    #[test]
+    fn test_build_event_config_source_failed() {
+        let collector = AuditCollector::new();
+        let event = build_event(&AuditContext {
+            command: "docker ps",
+            decision: "allow",
+            reason: None,
+            collector: &collector,
+            session_id: None,
+            cwd: "/tmp",
+            mode: "hook",
+            config_source: Some(
+                "/home/user/.config/safe-docker/config.toml (FAILED, using defaults)",
+            ),
+        });
+
+        assert_eq!(
+            event.config_source.as_deref(),
+            Some("/home/user/.config/safe-docker/config.toml (FAILED, using defaults)")
+        );
+    }
+
+    // --- JSONL 出力構造の検証テスト ---
+
+    #[test]
+    fn test_write_jsonl_optional_fields_omitted() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("opt-fields.jsonl");
+        let path_str = path.to_str().unwrap();
+
+        let collector = AuditCollector::new();
+        let event = build_event(&AuditContext {
+            command: "docker ps",
+            decision: "allow",
+            reason: None,
+            collector: &collector,
+            session_id: None,
+            cwd: "/tmp",
+            mode: "hook",
+            config_source: None,
+        });
+
+        write_jsonl(&event, path_str);
+
+        let content = std::fs::read_to_string(&path).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(content.trim()).unwrap();
+
+        // Optional フィールドが None の場合、キーが出力されないこと
+        assert!(parsed.get("reason").is_none());
+        assert!(parsed.get("session_id").is_none());
+        assert!(parsed.get("docker_subcommand").is_none());
+        assert!(parsed.get("docker_image").is_none());
+        assert!(parsed.get("config_source").is_none());
+    }
+
+    #[test]
+    fn test_write_jsonl_empty_arrays_present() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("arrays.jsonl");
+        let path_str = path.to_str().unwrap();
+
+        let collector = AuditCollector::new();
+        let event = build_event(&AuditContext {
+            command: "docker ps",
+            decision: "allow",
+            reason: None,
+            collector: &collector,
+            session_id: None,
+            cwd: "/tmp",
+            mode: "hook",
+            config_source: None,
+        });
+
+        write_jsonl(&event, path_str);
+
+        let content = std::fs::read_to_string(&path).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(content.trim()).unwrap();
+
+        // 空配列は [] として出力される
+        assert_eq!(parsed["bind_mounts"], serde_json::json!([]));
+        assert_eq!(parsed["dangerous_flags"], serde_json::json!([]));
+    }
+
+    #[test]
+    fn test_write_jsonl_all_optional_fields_present() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("all-fields.jsonl");
+        let path_str = path.to_str().unwrap();
+
+        let mut collector = AuditCollector::new();
+        let cmd = DockerCommand {
+            subcommand: DockerSubcommand::Run,
+            bind_mounts: vec![BindMount {
+                host_path: "/etc".to_string(),
+                container_path: "/data".to_string(),
+                source: MountSource::VolumeFlag,
+                read_only: false,
+            }],
+            dangerous_flags: vec![DangerousFlag::Privileged],
+            compose_file: None,
+            image: Some("ubuntu".to_string()),
+            host_paths: vec![],
+        };
+        collector.record_docker_command(&cmd);
+
+        let event = build_event(&AuditContext {
+            command: "docker run --privileged -v /etc:/data ubuntu",
+            decision: "deny",
+            reason: Some("not allowed"),
+            collector: &collector,
+            session_id: Some("sess-001"),
+            cwd: "/home/user",
+            mode: "wrapper",
+            config_source: Some("/home/user/.config/safe-docker/config.toml"),
+        });
+
+        write_jsonl(&event, path_str);
+
+        let content = std::fs::read_to_string(&path).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(content.trim()).unwrap();
+
+        // 全 Optional フィールドが出力されること
+        assert_eq!(parsed["reason"], "not allowed");
+        assert_eq!(parsed["session_id"], "sess-001");
+        assert_eq!(parsed["docker_subcommand"], "run");
+        assert_eq!(parsed["docker_image"], "ubuntu");
+        assert_eq!(
+            parsed["config_source"],
+            "/home/user/.config/safe-docker/config.toml"
+        );
+        assert_eq!(parsed["mode"], "wrapper");
+        assert_eq!(parsed["bind_mounts"], serde_json::json!(["/etc"]));
+        assert_eq!(
+            parsed["dangerous_flags"],
+            serde_json::json!(["--privileged"])
+        );
+    }
+
+    // --- emit() フォーマット分岐テスト ---
+
+    #[test]
+    fn test_emit_jsonl_only_does_not_create_otlp() {
+        let dir = tempfile::tempdir().unwrap();
+        let jsonl_path = dir.path().join("audit.jsonl");
+        let otlp_path = dir.path().join("otlp.jsonl");
+
+        let config = AuditConfig {
+            enabled: true,
+            format: AuditFormat::Jsonl,
+            jsonl_path: jsonl_path.to_str().unwrap().to_string(),
+            otlp_path: otlp_path.to_str().unwrap().to_string(),
+        };
+
+        let collector = AuditCollector::new();
+        let event = build_event(&AuditContext {
+            command: "docker ps",
+            decision: "allow",
+            reason: None,
+            collector: &collector,
+            session_id: None,
+            cwd: "/tmp",
+            mode: "hook",
+            config_source: None,
+        });
+
+        emit(&event, &config);
+
+        assert!(jsonl_path.exists(), "JSONL file should be created");
+        assert!(
+            !otlp_path.exists(),
+            "OTLP file should NOT be created for Jsonl format"
+        );
+    }
+
     #[cfg(feature = "otlp")]
     mod otlp_tests {
         use super::*;
