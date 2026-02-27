@@ -231,6 +231,12 @@ pub fn evaluate(cmd: &DockerCommand, config: &Config, cwd: &str) -> Decision {
                     display
                 ));
             }
+            DangerousFlag::CgroupParent(val) => {
+                ask_reasons.push(format!(
+                    "--cgroup-parent={} may bypass resource limits or expose host cgroup information",
+                    val
+                ));
+            }
         }
     }
 
@@ -403,7 +409,24 @@ pub fn evaluate(cmd: &DockerCommand, config: &Config, cwd: &str) -> Decision {
                     display
                 ));
             }
-            _ => {}
+            DangerousFlag::VolumesFrom(src) => {
+                ask_reasons.push(format!(
+                    "Compose: 'volumes_from: {}' may inherit dangerous mounts; verify the source container is safe",
+                    src
+                ));
+            }
+            DangerousFlag::CgroupnsHost => {
+                deny_reasons.push(
+                    "Compose: 'cgroupns: host' is not allowed (exposes host cgroup namespace)"
+                        .to_string(),
+                );
+            }
+            DangerousFlag::CgroupParent(val) => {
+                ask_reasons.push(format!(
+                    "Compose: 'cgroup_parent: {}' may bypass resource limits or expose host cgroup information",
+                    val
+                ));
+            }
         }
     }
 
@@ -1453,5 +1476,82 @@ mod tests {
         // 不正なブラケット形式はフォールバック
         assert!(!is_metadata_endpoint("host:[incomplete"));
         assert!(!is_metadata_endpoint("host:]reversed["));
+    }
+
+    // --- Compose volumes_from / cgroup_parent / CgroupParent CLI ---
+
+    #[test]
+    fn test_evaluate_compose_volumes_from_ask() {
+        let config = Config::default();
+        let cmd = DockerCommand {
+            subcommand: DockerSubcommand::ComposeUp,
+            bind_mounts: vec![],
+            dangerous_flags: vec![],
+            compose_file: None,
+            image: None,
+            host_paths: vec![],
+        };
+
+        // compose ファイルを作成
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("compose.yml"),
+            "services:\n  web:\n    image: ubuntu\n    volumes_from:\n      - db\n",
+        )
+        .unwrap();
+
+        let decision = evaluate(&cmd, &config, dir.path().to_str().unwrap());
+        assert!(
+            matches!(decision, Decision::Ask { .. }),
+            "Compose volumes_from should result in ask: {:?}",
+            decision
+        );
+    }
+
+    #[test]
+    fn test_evaluate_compose_cgroup_parent_ask() {
+        let config = Config::default();
+        let cmd = DockerCommand {
+            subcommand: DockerSubcommand::ComposeUp,
+            bind_mounts: vec![],
+            dangerous_flags: vec![],
+            compose_file: None,
+            image: None,
+            host_paths: vec![],
+        };
+
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("compose.yml"),
+            "services:\n  web:\n    image: ubuntu\n    cgroup_parent: /custom-cgroup\n",
+        )
+        .unwrap();
+
+        let decision = evaluate(&cmd, &config, dir.path().to_str().unwrap());
+        assert!(
+            matches!(decision, Decision::Ask { .. }),
+            "Compose cgroup_parent should result in ask: {:?}",
+            decision
+        );
+    }
+
+    #[test]
+    fn test_evaluate_cgroup_parent_ask() {
+        let config = Config::default();
+        let cmd = DockerCommand {
+            subcommand: DockerSubcommand::Run,
+            bind_mounts: vec![],
+            dangerous_flags: vec![DangerousFlag::CgroupParent("/custom-cgroup".to_string())],
+            compose_file: None,
+            image: Some("ubuntu".to_string()),
+            host_paths: vec![],
+        };
+
+        let decision = evaluate(&cmd, &config, "/tmp");
+        assert!(
+            matches!(decision, Decision::Ask { .. }),
+            "CLI --cgroup-parent should result in ask: {:?}",
+            decision
+        );
     }
 }

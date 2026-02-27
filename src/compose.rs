@@ -207,6 +207,20 @@ fn extract_service_dangerous_settings(service: &serde_yml::Value, flags: &mut Ve
         }
     }
 
+    // volumes_from: [container_name, service_name:ro, ...]
+    if let Some(vf) = service.get("volumes_from").and_then(|v| v.as_sequence()) {
+        for item in vf {
+            if let Some(src) = item.as_str() {
+                flags.push(DangerousFlag::VolumesFrom(src.to_string()));
+            }
+        }
+    }
+
+    // cgroup_parent: /custom-cgroup
+    if let Some(val) = service.get("cgroup_parent").and_then(|v| v.as_str()) {
+        flags.push(DangerousFlag::CgroupParent(val.to_string()));
+    }
+
     // devices: [/dev/sda, ...]
     if let Some(devices) = service.get("devices").and_then(|v| v.as_sequence()) {
         for device in devices {
@@ -1297,5 +1311,54 @@ services:
                 .any(|f| matches!(f, DangerousFlag::MountPropagation(_))),
             "Normal :ro should not trigger MountPropagation"
         );
+    }
+
+    // --- Compose volumes_from / cgroup_parent ---
+
+    #[test]
+    fn test_parse_compose_volumes_from() {
+        let yaml_str = r#"
+services:
+  web:
+    image: ubuntu
+    volumes_from:
+      - db
+      - cache:ro
+"#;
+        let dir = tempfile::tempdir().unwrap();
+        let compose_path = dir.path().join("compose.yml");
+        std::fs::write(&compose_path, yaml_str).unwrap();
+
+        let analysis = analyze_compose(&compose_path).unwrap();
+        let vf: Vec<_> = analysis
+            .dangerous_flags
+            .iter()
+            .filter(|f| matches!(f, DangerousFlag::VolumesFrom(_)))
+            .collect();
+        assert_eq!(vf.len(), 2);
+        assert!(matches!(&vf[0], DangerousFlag::VolumesFrom(s) if s == "db"));
+        assert!(matches!(&vf[1], DangerousFlag::VolumesFrom(s) if s == "cache:ro"));
+    }
+
+    #[test]
+    fn test_parse_compose_cgroup_parent() {
+        let yaml_str = r#"
+services:
+  web:
+    image: ubuntu
+    cgroup_parent: /custom-cgroup
+"#;
+        let dir = tempfile::tempdir().unwrap();
+        let compose_path = dir.path().join("compose.yml");
+        std::fs::write(&compose_path, yaml_str).unwrap();
+
+        let analysis = analyze_compose(&compose_path).unwrap();
+        let cp: Vec<_> = analysis
+            .dangerous_flags
+            .iter()
+            .filter(|f| matches!(f, DangerousFlag::CgroupParent(_)))
+            .collect();
+        assert_eq!(cp.len(), 1);
+        assert!(matches!(&cp[0], DangerousFlag::CgroupParent(s) if s == "/custom-cgroup"));
     }
 }
