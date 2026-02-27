@@ -19,10 +19,8 @@ enum ExistingDocker {
 }
 
 /// デフォルトのターゲットディレクトリ
-fn default_target_dir() -> PathBuf {
-    dirs::home_dir()
-        .unwrap_or_else(|| PathBuf::from("~"))
-        .join(".local/bin")
+fn default_target_dir() -> Option<PathBuf> {
+    dirs::home_dir().map(|h| h.join(".local/bin"))
 }
 
 /// 自分自身の実行パスを取得（canonicalize 済み）
@@ -126,12 +124,32 @@ pub fn run(args: &[String]) -> i32 {
 
     let force = args.iter().any(|a| a == "--force");
 
-    // --target DIR
-    let target_dir = args
+    // --target DIR（値必須のバリデーション）
+    let has_target_flag = args.iter().any(|a| a == "--target");
+    let target_from_args = args
         .windows(2)
         .find(|w| w[0] == "--target")
-        .map(|w| PathBuf::from(&w[1]))
-        .unwrap_or_else(default_target_dir);
+        .map(|w| PathBuf::from(&w[1]));
+
+    if has_target_flag && target_from_args.is_none() {
+        eprintln!("[safe-docker] ERROR: --target requires a directory argument.");
+        eprintln!("  Usage: safe-docker setup --target DIR");
+        return 1;
+    }
+
+    let target_dir = match target_from_args {
+        Some(dir) => dir,
+        None => match default_target_dir() {
+            Some(dir) => dir,
+            None => {
+                eprintln!(
+                    "[safe-docker] ERROR: Could not determine home directory for default target."
+                );
+                eprintln!("  Specify a target directory with: safe-docker setup --target DIR");
+                return 1;
+            }
+        },
+    };
 
     let self_path = match self_exe() {
         Some(p) => p,
@@ -275,7 +293,7 @@ fn print_path_advice(target_dir: &Path) {
 
 /// 本物の docker バイナリの検出情報を表示
 fn print_real_docker_info() {
-    let config = crate::config::Config::default();
+    let config = crate::config::Config::load().unwrap_or_default();
     match crate::wrapper::find_real_docker_detailed(&config) {
         Ok(res) => {
             eprintln!(
@@ -439,6 +457,14 @@ mod tests {
     #[test]
     fn test_default_target_dir() {
         let target = default_target_dir();
-        assert!(target.to_string_lossy().contains(".local/bin"));
+        assert!(target.is_some());
+        assert!(target.unwrap().to_string_lossy().contains(".local/bin"));
+    }
+
+    #[test]
+    fn test_setup_target_without_value() {
+        let args = vec!["setup".to_string(), "--target".to_string()];
+        let exit_code = run(&args);
+        assert_eq!(exit_code, 1); // --target に値がない場合はエラー
     }
 }

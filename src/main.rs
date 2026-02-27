@@ -57,7 +57,7 @@ fn main() {
                     let source = if cfg_path.exists() {
                         format!("{}", cfg_path.display())
                     } else {
-                        "(default - no config file)".to_string()
+                        "(default)".to_string()
                     };
                     (config, source)
                 }
@@ -293,16 +293,16 @@ fn run_hook_mode() {
             hook::Decision::Ask(r) => ("ask", Some(r.as_str())),
         };
 
-        let event = audit::build_event(
-            &command,
-            decision_str,
+        let event = audit::build_event(&audit::AuditContext {
+            command: &command,
+            decision: decision_str,
             reason,
             collector,
-            input.session_id.as_deref(),
-            &cwd,
-            "hook",
-            Some(&hook_config_source),
-        );
+            session_id: input.session_id.as_deref(),
+            cwd: &cwd,
+            mode: "hook",
+            config_source: Some(&hook_config_source),
+        });
         audit::emit(&event, &config.audit);
     }
 }

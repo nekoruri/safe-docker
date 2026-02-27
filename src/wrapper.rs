@@ -101,16 +101,16 @@ pub fn run(args: &[String], config: &Config, config_source: &str) -> i32 {
             Decision::Ask(r) => ("ask", Some(r.as_str())),
         };
 
-        let event = audit::build_event(
-            &command_str,
-            decision_str,
+        let event = audit::build_event(&audit::AuditContext {
+            command: &command_str,
+            decision: decision_str,
             reason,
             collector,
-            None,
-            &cwd,
-            "wrapper",
-            Some(config_source),
-        );
+            session_id: None,
+            cwd: &cwd,
+            mode: "wrapper",
+            config_source: Some(config_source),
+        });
         audit::emit(&event, &config.audit);
     }
 
@@ -596,11 +596,11 @@ mod tests {
 
     #[test]
     fn test_find_real_docker_env_var() {
-        let _lock = ENV_MUTEX.lock().unwrap();
+        let lock = ENV_MUTEX.lock().unwrap();
         let config = default_config();
         // /usr/bin/docker が存在する場合のテスト
         if Path::new("/usr/bin/docker").exists() {
-            let _env = TempEnvVar::set("SAFE_DOCKER_DOCKER_PATH", "/usr/bin/docker");
+            let _env = TempEnvVar::set(&lock, "SAFE_DOCKER_DOCKER_PATH", "/usr/bin/docker");
             let result = find_real_docker(&config);
             assert_eq!(result, Some(PathBuf::from("/usr/bin/docker")));
         }
@@ -630,8 +630,8 @@ mod tests {
 
     #[test]
     fn test_find_real_docker_detailed_env_var_source() {
-        let _lock = ENV_MUTEX.lock().unwrap();
-        let _env = TempEnvVar::set("SAFE_DOCKER_DOCKER_PATH", "/bin/echo");
+        let lock = ENV_MUTEX.lock().unwrap();
+        let _env = TempEnvVar::set(&lock, "SAFE_DOCKER_DOCKER_PATH", "/bin/echo");
 
         let config = default_config();
         let result = find_real_docker_detailed(&config);
@@ -643,8 +643,8 @@ mod tests {
 
     #[test]
     fn test_find_real_docker_detailed_config_source() {
-        let _lock = ENV_MUTEX.lock().unwrap();
-        let _env = TempEnvVar::remove("SAFE_DOCKER_DOCKER_PATH");
+        let lock = ENV_MUTEX.lock().unwrap();
+        let _env = TempEnvVar::remove(&lock, "SAFE_DOCKER_DOCKER_PATH");
 
         let mut config = default_config();
         config.wrapper.docker_path = "/bin/echo".to_string();
@@ -657,8 +657,8 @@ mod tests {
 
     #[test]
     fn test_find_real_docker_detailed_not_found() {
-        let _lock = ENV_MUTEX.lock().unwrap();
-        let _env = TempEnvVar::set("SAFE_DOCKER_DOCKER_PATH", "/nonexistent/docker_abc");
+        let lock = ENV_MUTEX.lock().unwrap();
+        let _env = TempEnvVar::set(&lock, "SAFE_DOCKER_DOCKER_PATH", "/nonexistent/docker_abc");
 
         let mut config = default_config();
         config.wrapper.docker_path = "/nonexistent/docker_xyz".to_string();

@@ -136,6 +136,6 @@ OS 引数 → wrapper::run()
 - **環境変数を操作するテスト**: `test_utils::TempEnvVar` と `ENV_MUTEX` を使うこと。`unsafe { std::env::set_var() }` を直接呼ばない
   ```rust
   use crate::test_utils::{TempEnvVar, ENV_MUTEX};
-  let _lock = ENV_MUTEX.lock().unwrap();
-  let _env = TempEnvVar::set("MY_VAR", "value");  // Drop 時に自動復元
+  let lock = ENV_MUTEX.lock().unwrap();
+  let _env = TempEnvVar::set(&lock, "MY_VAR", "value");  // Drop 時に自動復元
   ```
