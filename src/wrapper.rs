@@ -608,6 +608,9 @@ mod tests {
 
     #[test]
     fn test_find_real_docker_config() {
+        let lock = env_lock();
+        let _env = TempEnvVar::remove(&lock, "SAFE_DOCKER_DOCKER_PATH");
+
         let mut config = default_config();
         // 存在するパスでテスト
         if Path::new("/usr/bin/docker").exists() {
