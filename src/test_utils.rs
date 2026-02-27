@@ -13,7 +13,7 @@ static ENV_MUTEX: Mutex<()> = Mutex::new(());
 ///
 /// `env_lock()` でのみ取得でき、`TempEnvVar` のコンストラクタに渡すことで
 /// 無関係な `Mutex<()>` のガードが誤って使われることを防ぐ。
-pub struct EnvLock<'a>(MutexGuard<'a, ()>);
+pub struct EnvLock<'a>(#[allow(dead_code)] MutexGuard<'a, ()>);
 
 /// `ENV_MUTEX` をロックし、`EnvLock` ガードを返す。
 ///
