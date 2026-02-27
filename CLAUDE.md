@@ -50,6 +50,7 @@ cargo bench
 src/
 ├── main.rs            # エントリポイント、モード判別（Hook/Wrapper）、--check-config
 ├── wrapper.rs         # ラッパーモード（evaluate_docker_args, exec_docker, find_real_docker, handle_ask）
+├── setup.rs           # setup サブコマンド（シンボリックリンク作成、PATH 確認）
 ├── hook.rs            # Hook モード: stdin/stdout の JSON プロトコル、Decision 型
 ├── shell.rs           # シェルコマンドのパース（パイプ/チェイン分割、間接実行検出）※Hook モードのみ
 ├── docker_args.rs     # Docker CLI 引数のパース（サブコマンド、フラグ、マウント）※両モード共通

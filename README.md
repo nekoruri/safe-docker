@@ -228,22 +228,38 @@ safe-docker run -v ~/projects:/app ubuntu
 safe-docker compose up
 ```
 
-#### 方法 2: シンボリックリンクで透過的に置換
+#### 方法 2: setup コマンドで透過的に置換（推奨）
 
-PATH の先頭に safe-docker を `docker` として配置することで、既存のスクリプトやワークフローをそのまま保護できる:
+`safe-docker setup` を実行すると、シンボリックリンクの作成と PATH の確認を自動で行う:
 
 ```bash
-# ~/.local/bin が PATH の先頭にあることを確認
-ln -s $(which safe-docker) ~/.local/bin/docker
+safe-docker setup
+# → ~/.local/bin/docker -> safe-docker へのシンボリックリンクを作成
+# → PATH の設定状況を確認し、必要に応じてアドバイスを表示
 
-# 以降、docker コマンドが safe-docker 経由で実行される
+# ターゲットディレクトリを指定
+safe-docker setup --target ~/bin
+
+# 既存のシンボリックリンクを置換
+safe-docker setup --force
+```
+
+以降、`docker` コマンドが safe-docker 経由で実行される:
+
+```bash
 docker run -v /etc:/data ubuntu
 # → [safe-docker] BLOCKED: Path is outside $HOME ...
 ```
 
 safe-docker は `argv[0]` が `docker` の場合に透過モードとして動作し、本物の docker バイナリを自動検索して `exec` で置換する。
 
-#### 方法 3: シェルエイリアス
+#### 方法 3: 手動でシンボリックリンクを作成
+
+```bash
+ln -s $(which safe-docker) ~/.local/bin/docker
+```
+
+#### 方法 4: シェルエイリアス
 
 ```bash
 alias docker='safe-docker'
@@ -371,14 +387,17 @@ src/
 ├── policy.rs          # ポリシー評価（両モード共通）
 ├── compose.rs         # docker-compose.yml の解析（両モード共通）
 ├── config.rs          # TOML 設定ファイル（[wrapper] / [audit] セクション含む）
+├── setup.rs           # setup サブコマンド（シンボリックリンク作成、PATH 確認）
 ├── audit.rs           # 監査ログ（JSONL / OTLP、mode フィールドで Hook/Wrapper を区別）
-└── error.rs           # エラー型定義
+├── error.rs           # エラー型定義
+└── test_utils.rs      # テスト用ユーティリティ（TempEnvVar, ENV_MUTEX）
 
 tests/
-├── integration_test.rs  # Hook モードの E2E テスト
-├── wrapper_test.rs      # Wrapper モードの E2E テスト
-├── security_test.rs     # セキュリティバイパス検出テスト
-└── proptest_test.rs     # ランダム入力によるクラッシュ耐性テスト
+├── integration_test.rs    # Hook モードの E2E テスト
+├── wrapper_test.rs        # Wrapper モードの E2E テスト
+├── security_test.rs       # セキュリティバイパス検出テスト
+├── proptest_test.rs       # ランダム入力によるクラッシュ耐性テスト
+└── opa_consistency_test.rs  # OPA authz.rego との一貫性検証テスト
 
 benches/
 └── benchmark.rs         # criterion ベンチマーク
