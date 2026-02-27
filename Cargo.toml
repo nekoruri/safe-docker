@@ -18,7 +18,7 @@ otlp = ["dep:opentelemetry-proto"]
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 toml = "0.8"
-serde_yml = "0.0.12"
+serde_yaml_ng = "0.10"
 shell-words = "1"
 dirs = "6"
 thiserror = "2"

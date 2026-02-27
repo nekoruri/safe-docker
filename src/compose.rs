@@ -35,7 +35,7 @@ pub fn analyze_compose(compose_path: &Path) -> Result<ComposeAnalysis> {
 
     let expanded = expand_variables(&content, &env_vars);
 
-    let yaml: serde_yml::Value = serde_yml::from_str(&expanded).map_err(|e| {
+    let yaml: serde_yaml_ng::Value = serde_yaml_ng::from_str(&expanded).map_err(|e| {
         SafeDockerError::ComposeParse(format!(
             "Cannot parse compose file {:?}: {}",
             compose_path, e
@@ -76,7 +76,7 @@ pub fn analyze_compose(compose_path: &Path) -> Result<ComposeAnalysis> {
 
 /// サービス定義から volumes を抽出
 fn extract_service_volumes(
-    service: &serde_yml::Value,
+    service: &serde_yaml_ng::Value,
     compose_dir: &Path,
     mounts: &mut Vec<BindMount>,
     flags: &mut Vec<DangerousFlag>,
@@ -88,13 +88,13 @@ fn extract_service_volumes(
     for volume in volumes {
         match volume {
             // Short syntax: "host:container[:opts]"
-            serde_yml::Value::String(s) => {
+            serde_yaml_ng::Value::String(s) => {
                 if let Some(bm) = parse_short_volume(s, compose_dir, flags) {
                     mounts.push(bm);
                 }
             }
             // Long syntax: { type: bind, source: ..., target: ... }
-            serde_yml::Value::Mapping(m) => {
+            serde_yaml_ng::Value::Mapping(m) => {
                 if let Some(bm) = parse_long_volume(m, compose_dir, flags) {
                     mounts.push(bm);
                 }
@@ -108,11 +108,11 @@ fn extract_service_volumes(
         for vol in seq {
             if let Some(mapping) = vol.as_mapping()
                 && let Some(device) = mapping
-                    .get(serde_yml::Value::String("driver_opts".to_string()))
+                    .get(serde_yaml_ng::Value::String("driver_opts".to_string()))
                     .and_then(|d| d.as_mapping())
                     .and_then(|driver_opts| {
                         driver_opts
-                            .get(serde_yml::Value::String("device".to_string()))
+                            .get(serde_yaml_ng::Value::String("device".to_string()))
                             .and_then(|d| d.as_str())
                     })
                 && (device.starts_with('/') || device.starts_with('.'))
@@ -129,7 +129,10 @@ fn extract_service_volumes(
 }
 
 /// サービス定義から危険な設定を抽出
-fn extract_service_dangerous_settings(service: &serde_yml::Value, flags: &mut Vec<DangerousFlag>) {
+fn extract_service_dangerous_settings(
+    service: &serde_yaml_ng::Value,
+    flags: &mut Vec<DangerousFlag>,
+) {
     // privileged: true
     if service
         .get("privileged")
@@ -234,7 +237,7 @@ fn extract_service_dangerous_settings(service: &serde_yml::Value, flags: &mut Ve
     if let Some(extra_hosts) = service.get("extra_hosts") {
         match extra_hosts {
             // List format: ["host:ip", ...]
-            serde_yml::Value::Sequence(seq) => {
+            serde_yaml_ng::Value::Sequence(seq) => {
                 for item in seq {
                     if let Some(s) = item.as_str() {
                         flags.push(DangerousFlag::AddHost(s.to_string()));
@@ -242,7 +245,7 @@ fn extract_service_dangerous_settings(service: &serde_yml::Value, flags: &mut Ve
                 }
             }
             // Mapping format: { host: ip, ... }
-            serde_yml::Value::Mapping(map) => {
+            serde_yaml_ng::Value::Mapping(map) => {
                 for (key, value) in map {
                     if let (Some(host), Some(ip)) = (key.as_str(), value.as_str()) {
                         flags.push(DangerousFlag::AddHost(format!("{}:{}", host, ip)));
@@ -257,7 +260,7 @@ fn extract_service_dangerous_settings(service: &serde_yml::Value, flags: &mut Ve
     if let Some(sysctls) = service.get("sysctls") {
         match sysctls {
             // List format: ["key=value", ...]
-            serde_yml::Value::Sequence(seq) => {
+            serde_yaml_ng::Value::Sequence(seq) => {
                 for item in seq {
                     if let Some(s) = item.as_str() {
                         flags.push(DangerousFlag::Sysctl(s.to_string()));
@@ -265,7 +268,7 @@ fn extract_service_dangerous_settings(service: &serde_yml::Value, flags: &mut Ve
                 }
             }
             // Mapping format: { key: value, ... }
-            serde_yml::Value::Mapping(map) => {
+            serde_yaml_ng::Value::Mapping(map) => {
                 for (key, value) in map {
                     if let Some(key_str) = key.as_str() {
                         let val_str = value
@@ -289,7 +292,7 @@ fn extract_service_dangerous_settings(service: &serde_yml::Value, flags: &mut Ve
 /// - `env_file: [".env", ".env.local"]` (文字列リスト)
 /// - `env_file: [{path: ".env", required: true}]` (マッピングリスト)
 fn extract_service_env_file_paths(
-    service: &serde_yml::Value,
+    service: &serde_yaml_ng::Value,
     compose_dir: &Path,
     host_paths: &mut Vec<String>,
 ) {
@@ -299,21 +302,21 @@ fn extract_service_env_file_paths(
 
     match env_file {
         // 単一文字列: env_file: .env
-        serde_yml::Value::String(path) => {
+        serde_yaml_ng::Value::String(path) => {
             host_paths.push(resolve_path(path, compose_dir));
         }
         // リスト形式
-        serde_yml::Value::Sequence(seq) => {
+        serde_yaml_ng::Value::Sequence(seq) => {
             for item in seq {
                 match item {
                     // 文字列: env_file: [".env", ".env.local"]
-                    serde_yml::Value::String(path) => {
+                    serde_yaml_ng::Value::String(path) => {
                         host_paths.push(resolve_path(path, compose_dir));
                     }
                     // マッピング: env_file: [{path: ".env", required: true}]
-                    serde_yml::Value::Mapping(map) => {
+                    serde_yaml_ng::Value::Mapping(map) => {
                         if let Some(path) = map
-                            .get(serde_yml::Value::String("path".to_string()))
+                            .get(serde_yaml_ng::Value::String("path".to_string()))
                             .and_then(|v| v.as_str())
                         {
                             host_paths.push(resolve_path(path, compose_dir));
@@ -333,7 +336,7 @@ fn extract_service_env_file_paths(
 /// - `include: ["path/to/file.yml"]` (文字列リスト)
 /// - `include: [{path: "path/to/file.yml"}]` (マッピングリスト)
 fn extract_include_paths(
-    yaml: &serde_yml::Value,
+    yaml: &serde_yaml_ng::Value,
     compose_dir: &Path,
     host_paths: &mut Vec<String>,
 ) {
@@ -343,12 +346,12 @@ fn extract_include_paths(
 
     for item in includes {
         match item {
-            serde_yml::Value::String(path) => {
+            serde_yaml_ng::Value::String(path) => {
                 host_paths.push(resolve_path(path, compose_dir));
             }
-            serde_yml::Value::Mapping(map) => {
+            serde_yaml_ng::Value::Mapping(map) => {
                 if let Some(path) = map
-                    .get(serde_yml::Value::String("path".to_string()))
+                    .get(serde_yaml_ng::Value::String("path".to_string()))
                     .and_then(|v| v.as_str())
                 {
                     host_paths.push(resolve_path(path, compose_dir));
@@ -401,12 +404,12 @@ fn parse_short_volume(
 
 /// Long syntax のボリュームをパース
 fn parse_long_volume(
-    mapping: &serde_yml::Mapping,
+    mapping: &serde_yaml_ng::Mapping,
     compose_dir: &Path,
     flags: &mut Vec<DangerousFlag>,
 ) -> Option<BindMount> {
     let volume_type = mapping
-        .get(serde_yml::Value::String("type".to_string()))
+        .get(serde_yaml_ng::Value::String("type".to_string()))
         .and_then(|v| v.as_str())
         .unwrap_or("volume");
 
@@ -415,25 +418,25 @@ fn parse_long_volume(
     }
 
     let source = mapping
-        .get(serde_yml::Value::String("source".to_string()))
+        .get(serde_yaml_ng::Value::String("source".to_string()))
         .and_then(|v| v.as_str())?;
 
     let target = mapping
-        .get(serde_yml::Value::String("target".to_string()))
+        .get(serde_yaml_ng::Value::String("target".to_string()))
         .and_then(|v| v.as_str())
         .unwrap_or("");
 
     let read_only = mapping
-        .get(serde_yml::Value::String("read_only".to_string()))
+        .get(serde_yaml_ng::Value::String("read_only".to_string()))
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
 
     // bind.propagation の検出
     if let Some(propagation) = mapping
-        .get(serde_yml::Value::String("bind".to_string()))
+        .get(serde_yaml_ng::Value::String("bind".to_string()))
         .and_then(|b| b.as_mapping())
         .and_then(|bind| {
-            bind.get(serde_yml::Value::String("propagation".to_string()))
+            bind.get(serde_yaml_ng::Value::String("propagation".to_string()))
                 .and_then(|v| v.as_str())
         })
         && matches!(propagation, "shared" | "rshared")

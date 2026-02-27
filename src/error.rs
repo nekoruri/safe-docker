@@ -9,7 +9,7 @@ pub enum SafeDockerError {
     Json(#[from] serde_json::Error),
 
     #[error("YAML parse error: {0}")]
-    Yaml(#[from] serde_yml::Error),
+    Yaml(#[from] serde_yaml_ng::Error),
 
     #[error("TOML parse error: {0}")]
     Toml(#[from] toml::de::Error),
