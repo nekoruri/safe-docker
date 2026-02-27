@@ -2217,6 +2217,75 @@ mod tests {
         assert_privileged_detected_after_flag("--dns-option", "ndots:5");
     }
 
+    #[test]
+    fn test_flag_with_value_expose() {
+        assert_privileged_detected_after_flag("--expose", "8080");
+    }
+
+    #[test]
+    fn test_flag_with_value_ip() {
+        assert_privileged_detected_after_flag("--ip", "172.17.0.2");
+    }
+
+    #[test]
+    fn test_flag_with_value_stop() {
+        assert_privileged_detected_after_flag("--stop-signal", "SIGTERM");
+        assert_privileged_detected_after_flag("--stop-timeout", "30");
+    }
+
+    #[test]
+    fn test_flag_with_value_health() {
+        assert_privileged_detected_after_flag("--health-cmd", "curl -f http://localhost/");
+        assert_privileged_detected_after_flag("--health-interval", "30s");
+        assert_privileged_detected_after_flag("--health-retries", "3");
+        assert_privileged_detected_after_flag("--health-start-period", "5s");
+        assert_privileged_detected_after_flag("--health-timeout", "10s");
+    }
+
+    #[test]
+    fn test_flag_with_value_memory_swappiness() {
+        assert_privileged_detected_after_flag("--memory-swappiness", "60");
+    }
+
+    #[test]
+    fn test_flag_with_value_kernel_memory() {
+        assert_privileged_detected_after_flag("--kernel-memory", "256m");
+    }
+
+    #[test]
+    fn test_flag_with_value_device_cgroup() {
+        assert_privileged_detected_after_flag("--device-cgroup-rule", "c 42:* rmw");
+    }
+
+    #[test]
+    fn test_flag_with_value_device_io() {
+        assert_privileged_detected_after_flag("--device-read-bps", "/dev/sda:1mb");
+        assert_privileged_detected_after_flag("--device-write-bps", "/dev/sda:1mb");
+        assert_privileged_detected_after_flag("--device-read-iops", "/dev/sda:1000");
+        assert_privileged_detected_after_flag("--device-write-iops", "/dev/sda:1000");
+    }
+
+    #[test]
+    fn test_flag_with_value_blkio() {
+        assert_privileged_detected_after_flag("--blkio-weight", "500");
+        assert_privileged_detected_after_flag("--blkio-weight-device", "/dev/sda:200");
+    }
+
+    #[test]
+    fn test_flag_with_value_volume_driver() {
+        assert_privileged_detected_after_flag("--volume-driver", "local");
+    }
+
+    #[test]
+    fn test_flag_with_value_label_file() {
+        assert_privileged_detected_after_flag("--label-file", "/tmp/labels.txt");
+    }
+
+    #[test]
+    fn test_flag_with_value_network_alias() {
+        assert_privileged_detected_after_flag("--network-alias", "myalias");
+    }
+
     // --- 複合フラグの組み合わせテスト ---
 
     #[test]
@@ -2248,6 +2317,7 @@ mod tests {
     #[test]
     fn test_compound_many_flags_before_dangerous() {
         // 多数の値付きフラグの後に危険フラグがあっても検出される
+        // --network bridge (スペース区切り) を使い、値消費の回帰を検証する
         let args = vec![
             "run",
             "-e",
@@ -2266,15 +2336,17 @@ mod tests {
             "always",
             "--log-driver",
             "json-file",
-            "--network=host",
+            "--network",
+            "bridge",
+            "--privileged",
             "ubuntu",
         ];
         let cmd = parse_docker_args(&args);
         assert!(
             cmd.dangerous_flags
                 .iter()
-                .any(|f| matches!(f, DangerousFlag::NetworkHost)),
-            "network=host should be detected after many flags: {:?}",
+                .any(|f| matches!(f, DangerousFlag::Privileged)),
+            "--privileged should be detected after many flags with space-separated values: {:?}",
             cmd.dangerous_flags
         );
     }
