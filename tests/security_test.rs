@@ -4,7 +4,12 @@ use std::io::Write;
 use std::process::{Command, Stdio};
 
 fn run_hook(input_json: &str) -> (String, i32) {
+    // 空の config をピンしてテストを hermetic にする（環境の config.toml の影響を排除）
+    let config_dir = tempfile::tempdir().expect("Failed to create temp dir for config");
+    let config_path = config_dir.path().join("empty.toml");
+    std::fs::write(&config_path, "").expect("Failed to write empty config");
     let mut child = Command::new(env!("CARGO_BIN_EXE_safe-docker"))
+        .env("SAFE_DOCKER_CONFIG", &config_path)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
