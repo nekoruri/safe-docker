@@ -1873,10 +1873,15 @@ mod tests {
         assert!(is_secret_build_arg("PRIVATE_KEY=xxx"));
         assert!(is_secret_build_arg("DB_CREDENTIAL=xxx"));
         assert!(is_secret_build_arg("PASSWD_HASH=xxx"));
+        // KEY patterns
+        assert!(is_secret_build_arg("AWS_ACCESS_KEY=xxx"));
+        assert!(is_secret_build_arg("MY_KEY_FILE=xxx"));
+        assert!(is_secret_build_arg("KEY=value"));
         // Not secret patterns
         assert!(!is_secret_build_arg("APP_VERSION=1.0"));
         assert!(!is_secret_build_arg("BUILD_NUMBER=42"));
         assert!(!is_secret_build_arg("NODE_ENV=production"));
+        assert!(!is_secret_build_arg("MONKEY=banana"));
     }
 
     #[test]

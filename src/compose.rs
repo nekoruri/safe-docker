@@ -224,8 +224,7 @@ fn extract_service_dangerous_settings(service: &serde_yml::Value, flags: &mut Ve
             // Mapping format: { host: ip, ... }
             serde_yml::Value::Mapping(map) => {
                 for (key, value) in map {
-                    if let Some(host) = key.as_str() {
-                        let ip = value.as_str().map(|s| s.to_string()).unwrap_or_default();
+                    if let (Some(host), Some(ip)) = (key.as_str(), value.as_str()) {
                         flags.push(DangerousFlag::AddHost(format!("{}:{}", host, ip)));
                     }
                 }
