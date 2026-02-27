@@ -1,6 +1,6 @@
 [package]
 name = "safe-docker"
-version = "0.6.0"
+version = "0.7.0"
 edition = "2024"
 rust-version = "1.88"
 description = "Safe Docker command wrapper and Claude Code hook for container security"
