@@ -37,6 +37,12 @@ criterion = { version = "0.8", features = ["html_reports"] }
 name = "benchmark"
 harness = false
 
+[lints.rust]
+warnings = "deny"
+
+[lints.clippy]
+all = { level = "deny", priority = -1 }
+
 [profile.release]
 opt-level = "z"
 lto = true

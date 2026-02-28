@@ -8,7 +8,6 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
-  RUSTFLAGS: -Dwarnings
 
 jobs:
   test:
@@ -73,8 +72,8 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
-      - run: cargo clippy -- -D warnings
-      - run: cargo clippy --features otlp -- -D warnings
+      - run: cargo clippy
+      - run: cargo clippy --features otlp
 
   fmt:
     name: Format
@@ -114,8 +113,6 @@ jobs:
   coverage:
     name: Coverage
     runs-on: ubuntu-latest
-    env:
-      RUSTFLAGS: "" # cargo-llvm-cov manages RUSTFLAGS internally
     steps:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
