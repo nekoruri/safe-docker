@@ -7,7 +7,7 @@ safe-docker は、判定結果を stdout の JSON (Claude Code hook プロトコ
 ## 方針
 
 - **JSONL**: 常に利用可能。追加依存なし
-- **OTLP JSON**: Cargo feature `otlp` で有効化。`opentelemetry-proto` クレート使用
+- **OTLP JSON**: Cargo feature `otlp` で有効化。手動定義の OTLP 構造体を使用（外部依存なし）
 - **OTel データモデル**: LogRecord を使用 (Span ではない。各 hook 呼び出しは duration のない単一評価イベント)
 - **性能**: hook レスポンス (stdout JSON) の後にファイル I/O。audit 無効時はゼロオーバーヘッド
 
@@ -42,7 +42,7 @@ stdin (JSON) → hook::read_input()
 
 | ファイル | 変更内容 |
 |---------|---------|
-| `Cargo.toml` | `otlp` feature + `opentelemetry-proto` optional 依存 + `gethostname` 依存追加 |
+| `Cargo.toml` | `otlp` feature + `gethostname` 依存追加 |
 | `src/main.rs` | `pub mod audit` 追加、`process_command_with_audit()` 新設、`main()` に audit 統合 |
 | `src/audit.rs` | **新規作成** — AuditEvent, AuditCollector, JSONL/OTLP 出力 |
 | `src/config.rs` | `AuditConfig`, `AuditFormat` 追加、`Config` に `audit` フィールド追加 |

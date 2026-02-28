@@ -4,6 +4,8 @@ pub mod config;
 pub mod docker_args;
 pub mod error;
 pub mod hook;
+#[cfg(feature = "otlp")]
+pub mod otlp_types;
 pub mod path_validator;
 pub mod policy;
 pub mod setup;
