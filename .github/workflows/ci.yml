@@ -110,3 +110,26 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: cargo check
       - run: cargo check --features otlp
+
+  coverage:
+    name: Coverage
+    runs-on: ubuntu-latest
+    env:
+      RUSTFLAGS: "" # cargo-llvm-cov manages RUSTFLAGS internally
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: llvm-tools-preview
+      - uses: taiki-e/install-action@cargo-llvm-cov
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: coverage
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: Generate coverage
+        run: cargo llvm-cov --all-features --lcov --output-path lcov.info
+      - name: Upload to Codecov
+        uses: codecov/codecov-action@v5
+        with:
+          files: lcov.info
+          fail_ci_if_error: false
