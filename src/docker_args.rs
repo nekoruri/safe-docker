@@ -925,93 +925,119 @@ fn parse_compose_args(args: &[&str], start: usize, cmd: &mut DockerCommand) {
     }
 }
 
+/// `docker run` / `docker create` で値を取るフラグ一覧。
+///
+/// カテゴリごとに整理されており、新しいフラグを追加する際は
+/// 適切なカテゴリに配置すること。ここに不足があると、フラグの値が
+/// イメージ名として誤認され、後続の危険フラグ検出に失敗する。
+const VALUE_FLAGS: &[&str] = &[
+    // Container identity
+    "--name",
+    "--hostname",
+    "-h",
+    "--domainname",
+    "--mac-address",
+    "--cidfile",
+    // User / workdir / entrypoint
+    "--user",
+    "-u",
+    "-w",
+    "--workdir",
+    "--entrypoint",
+    // Environment
+    "-e",
+    "--env",
+    "--env-file",
+    // Labels
+    "-l",
+    "--label",
+    "--label-file",
+    // Networking
+    "--network",
+    "--net",
+    "--network-alias",
+    "--ip",
+    "--ip6",
+    "--dns",
+    "--dns-search",
+    "--dns-option",
+    "--add-host",
+    "--link",
+    // Ports
+    "-p",
+    "--publish",
+    "--expose",
+    // Storage
+    "--volumes-from",
+    "--volume-driver",
+    "--tmpfs",
+    "--shm-size",
+    "--storage-opt",
+    // Resource limits: CPU
+    "-c",
+    "--cpu-shares",
+    "--cpus",
+    "--cpuset-cpus",
+    "--cpuset-mems",
+    "--cpu-period",
+    "--cpu-quota",
+    // Resource limits: Memory
+    "-m",
+    "--memory",
+    "--memory-swap",
+    "--memory-swappiness",
+    "--memory-reservation",
+    "--kernel-memory",
+    // Resource limits: Other
+    "--pids-limit",
+    "--blkio-weight",
+    "--blkio-weight-device",
+    "--ulimit",
+    "--oom-score-adj",
+    // Device
+    "--device-cgroup-rule",
+    "--device-read-bps",
+    "--device-write-bps",
+    "--device-read-iops",
+    "--device-write-iops",
+    "--gpus",
+    // Namespace / isolation
+    "--cgroupns",
+    "--ipc",
+    "--userns",
+    "--uts",
+    "--pid",
+    "--cgroup-parent",
+    "--isolation",
+    // Security
+    "--sysctl",
+    // Logging
+    "--log-driver",
+    "--log-opt",
+    // Health check
+    "--health-cmd",
+    "--health-interval",
+    "--health-retries",
+    "--health-start-period",
+    "--health-timeout",
+    // Lifecycle
+    "--restart",
+    "--stop-signal",
+    "--stop-timeout",
+    // Runtime
+    "--runtime",
+    "--platform",
+    "--pull",
+    // Attach
+    "-a",
+    "--attach",
+    // Group
+    "--group-add",
+];
+
 /// 値を取るフラグかどうか判定 (次の引数をスキップするため)
 fn is_flag_with_value(arg: &str) -> bool {
-    matches!(
-        arg,
-        "-e" | "--env"
-            | "--name"
-            | "-w"
-            | "--workdir"
-            | "-p"
-            | "--publish"
-            | "--expose"
-            | "-l"
-            | "--label"
-            | "--hostname"
-            | "-h"
-            | "--user"
-            | "-u"
-            | "--entrypoint"
-            | "--restart"
-            | "--memory"
-            | "-m"
-            | "--cpus"
-            | "--log-driver"
-            | "--log-opt"
-            | "--network"
-            | "--net"
-            | "--ip"
-            | "--dns"
-            | "--add-host"
-            | "--tmpfs"
-            | "--shm-size"
-            | "--ulimit"
-            | "--stop-signal"
-            | "--stop-timeout"
-            | "--health-cmd"
-            | "--health-interval"
-            | "--health-retries"
-            | "--health-start-period"
-            | "--health-timeout"
-            | "--platform"
-            | "--pull"
-            | "--cgroupns"
-            | "--ipc"
-            | "--userns"
-            | "--uts"
-            | "--pid"
-            | "--volumes-from"
-            | "--runtime"
-            | "--cgroup-parent"
-            | "--cidfile"
-            | "--mac-address"
-            | "--network-alias"
-            | "--storage-opt"
-            | "--sysctl"
-            | "--gpus"
-            | "--attach"
-            | "-a"
-            | "--link"
-            | "--volume-driver"
-            | "--env-file"
-            | "--label-file"
-            | "--device-cgroup-rule"
-            | "--device-read-bps"
-            | "--device-write-bps"
-            | "--device-read-iops"
-            | "--device-write-iops"
-            | "--blkio-weight"
-            | "--blkio-weight-device"
-            | "-c"
-            | "--cpu-shares"
-            | "--cpuset-cpus"
-            | "--cpuset-mems"
-            | "--cpu-period"
-            | "--cpu-quota"
-            | "--memory-swap"
-            | "--memory-swappiness"
-            | "--memory-reservation"
-            | "--kernel-memory"
-            | "--pids-limit"
-            | "--group-add"
-            | "--domainname"
-            | "--oom-score-adj"
-            | "--isolation"
-            | "--ip6"
-            | "--dns-search"
-            | "--dns-option"
-    )
+    VALUE_FLAGS.contains(&arg)
 }
 
 #[cfg(test)]
