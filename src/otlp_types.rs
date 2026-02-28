@@ -11,6 +11,10 @@ fn is_zero_u32(v: &u32) -> bool {
     *v == 0
 }
 
+fn is_zero_i32(v: &i32) -> bool {
+    *v == 0
+}
+
 /// Top-level OTLP Logs export request.
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -48,10 +52,13 @@ pub struct LogRecord {
     pub time_unix_nano: u64,
     #[serde(serialize_with = "serialize_u64_as_string")]
     pub observed_time_unix_nano: u64,
+    #[serde(skip_serializing_if = "is_zero_i32")]
     pub severity_number: i32,
+    #[serde(skip_serializing_if = "String::is_empty")]
     pub severity_text: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub body: Option<AnyValue>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
     pub attributes: Vec<KeyValue>,
     #[serde(skip_serializing_if = "is_zero_u32")]
     pub dropped_attributes_count: u32,
@@ -73,6 +80,7 @@ pub struct LogRecord {
 #[derive(Debug, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Resource {
+    #[serde(skip_serializing_if = "Vec::is_empty")]
     pub attributes: Vec<KeyValue>,
     #[serde(skip_serializing_if = "is_zero_u32")]
     pub dropped_attributes_count: u32,
@@ -82,8 +90,11 @@ pub struct Resource {
 #[derive(Debug, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct InstrumentationScope {
+    #[serde(skip_serializing_if = "String::is_empty")]
     pub name: String,
+    #[serde(skip_serializing_if = "String::is_empty")]
     pub version: String,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
     pub attributes: Vec<KeyValue>,
     #[serde(skip_serializing_if = "is_zero_u32")]
     pub dropped_attributes_count: u32,
@@ -247,8 +258,33 @@ mod tests {
         assert_eq!(json["timeUnixNano"], "1234567890");
         assert_eq!(json["observedTimeUnixNano"], "1234567890");
         assert_eq!(json["severityNumber"], 9);
+        assert_eq!(json["severityText"], "INFO");
+        // Default-valued fields are omitted per proto3 JSON mapping
+        assert!(json.get("body").is_none());
+        assert!(json.get("attributes").is_none());
+        assert!(json.get("droppedAttributesCount").is_none());
+        assert!(json.get("flags").is_none());
         assert!(json.get("traceId").is_none());
         assert!(json.get("spanId").is_none());
+    }
+
+    #[test]
+    fn test_log_record_zero_severity_omitted() {
+        let record = LogRecord {
+            time_unix_nano: 0,
+            observed_time_unix_nano: 0,
+            severity_number: 0,
+            severity_text: String::new(),
+            body: None,
+            attributes: vec![],
+            dropped_attributes_count: 0,
+            flags: 0,
+            trace_id: vec![],
+            span_id: vec![],
+        };
+        let json = serde_json::to_value(&record).unwrap();
+        assert!(json.get("severityNumber").is_none());
+        assert!(json.get("severityText").is_none());
     }
 
     #[test]
