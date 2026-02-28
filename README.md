@@ -1,5 +1,9 @@
 # safe-docker
 
+[![CI](https://github.com/nekoruri/safe-docker/actions/workflows/ci.yml/badge.svg)](https://github.com/nekoruri/safe-docker/actions/workflows/ci.yml)
+[![Security Audit](https://github.com/nekoruri/safe-docker/actions/workflows/audit.yml/badge.svg)](https://github.com/nekoruri/safe-docker/actions/workflows/audit.yml)
+[![codecov](https://codecov.io/gh/nekoruri/safe-docker/graph/badge.svg)](https://codecov.io/gh/nekoruri/safe-docker)
+
 コーディングエージェントや開発者に **安全に Docker 操作権限を渡す**ためのセキュリティツール。
 
 2つの動作モードを持つ:
