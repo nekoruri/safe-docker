@@ -109,6 +109,11 @@
 - [x] musl 静的バイナリのリリース対象追加
 - [x] README にバッジ追加（CI、Security Audit、Codecov）
 
+### Phase 9: コード品質改善 (v0.8.0+)
+- [x] .gitignore 拡充（エディタ、OS、スクリーンショット）
+- [x] `is_flag_with_value` テーブル駆動化（`VALUE_FLAGS` 定数配列、カテゴリ別整理）
+- [x] `Cargo.toml` に `[lints]` セクション追加（`RUSTFLAGS` / `-- -D warnings` の一元管理）
+
 ## 未着手タスク
 
 > 攻撃面分析の詳細は [docs/ATTACK_SURFACE_ANALYSIS.md](ATTACK_SURFACE_ANALYSIS.md) を参照。
