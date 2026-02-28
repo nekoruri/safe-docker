@@ -19,6 +19,7 @@
 //! |---|---|---|
 //! | `String` | `""` | `String::is_empty` |
 //! | `Vec<T>` | `[]` | `Vec::is_empty` |
+//! | `u64` | `0` | `is_zero_u64` |
 //! | `u32` | `0` | `is_zero_u32` |
 //! | `i32` | `0` | `is_zero_i32` |
 //! | `Option<T>` | `None` | `Option::is_none` |
@@ -48,6 +49,10 @@ fn is_zero_u32(v: &u32) -> bool {
 }
 
 fn is_zero_i32(v: &i32) -> bool {
+    *v == 0
+}
+
+fn is_zero_u64(v: &u64) -> bool {
     *v == 0
 }
 
@@ -84,9 +89,15 @@ pub struct ScopeLogs {
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LogRecord {
-    #[serde(serialize_with = "serialize_u64_as_string")]
+    #[serde(
+        serialize_with = "serialize_u64_as_string",
+        skip_serializing_if = "is_zero_u64"
+    )]
     pub time_unix_nano: u64,
-    #[serde(serialize_with = "serialize_u64_as_string")]
+    #[serde(
+        serialize_with = "serialize_u64_as_string",
+        skip_serializing_if = "is_zero_u64"
+    )]
     pub observed_time_unix_nano: u64,
     #[serde(skip_serializing_if = "is_zero_i32")]
     pub severity_number: i32,
