@@ -12,6 +12,8 @@
 | v0.4.0 | 2026-02 | セキュリティ強化（コンテナ間 namespace 共有検出、mount propagation 検出、sensitive_paths 拡充）、Artifact Attestations 導入 |
 | v0.5.0 | 2026-02 | セキュリティ大幅強化: パーサー正確性改善、ホストファイル読み取り防止、capability 拡充、sysctl/add-host 検出、ビルド時安全性、Compose env_file/include/sysctls 対応 |
 | v0.6.0 | 2026-02 | 実運用品質向上: 診断機能強化、監査ログ config_source、macOS 対応修正、多環境 CI（macOS/musl）、MSRV 設定、CONTRIBUTING.md |
+| v0.7.0 | 2026-02 | setup サブコマンド追加、OPA Docker AuthZ 統合ガイド、pre-commit hook、TempEnvVar RAII ガード |
+| v0.8.0 | 2026-02 | OTLP 構造体手動定義（opentelemetry-proto 脱依存）、serde_yaml_ng 移行（RUSTSEC-2025-0068）、テスト大幅強化（shell.rs/wrapper/audit/compose） |
 
 ## 完了済みタスク
 
@@ -84,6 +86,29 @@
 - [x] BuildKit `--secret` / `--ssh` フラグの検証（ソースパスの $HOME 外アクセス → deny）
 - [x] Compose `include:` ディレクティブ（外部ファイル参照）の対応（$HOME 外 → ask）
 
+### Phase 6: setup サブコマンドと開発体験 (v0.7.0)
+- [x] `safe-docker setup` コマンド（シンボリックリンク作成、PATH 確認）
+- [x] OPA Docker AuthZ 統合ガイド（docs/OPA_DOCKER_AUTHZ.md）
+- [x] pre-commit hook（cargo fmt）
+- [x] TempEnvVar RAII ガードによるテストの安全な環境変数操作
+
+### Phase 7: 品質・セキュリティ・依存整理 (v0.8.0)
+- [x] OTLP 構造体の手動定義（opentelemetry-proto クレート依存を除去）
+- [x] serde_yml → serde_yaml_ng 移行（RUSTSEC-2025-0068 対応）
+- [x] yanked 依存クレートの更新
+- [x] テスト大幅強化: shell.rs（14→62テスト）、wrapper 非対話テスト、audit 環境テスト、compose driver_opts テスト
+- [x] is_flag_with_value() 回帰防止テスト
+- [x] メタデータ IP 正規化、Compose extra_hosts、KEY 検出のセキュリティ修正
+- [x] Compose volumes_from / cgroup_parent 検出
+
+### Phase 8: CI 強化 (v0.8.0+)
+- [x] cargo audit ワークフロー（週次スケジュール + push/PR）
+- [x] dependabot 設定（cargo + github-actions、グループ化）
+- [x] カバレッジ計測（cargo-llvm-cov + Codecov 連携）
+- [x] codecov.yml（project 90%、patch 80% の品質ゲート）
+- [x] musl 静的バイナリのリリース対象追加
+- [x] README にバッジ追加（CI、Security Audit、Codecov）
+
 ## 未着手タスク
 
 > 攻撃面分析の詳細は [docs/ATTACK_SURFACE_ANALYSIS.md](ATTACK_SURFACE_ANALYSIS.md) を参照。
@@ -99,16 +124,7 @@
 - [ ] シンボリックリンク setup ヘルパーコマンド
 
 ### テスト・CI
-- [x] 多環境 smoke テスト（Linux glibc/musl, macOS Apple Silicon）
 - [ ] 複数 Docker デーモン環境テスト（colima, orbstack）
-- [x] 大規模 compose ファイル（1000行超）のパフォーマンステスト
-- [x] MSRV (Minimum Supported Rust Version) CI チェック（Rust 1.88）
-- [x] CI キャッシュ最適化（PR ビルドでのキャッシュ保存抑制）
-
-### ドキュメント
-- [x] is_flag_with_value() リスト更新ガイド
-- [x] 新しい危険フラグ追加時のチェックリスト
-- [x] OPA Docker AuthZ との統合ガイド
 
 ## 設計メモ
 
