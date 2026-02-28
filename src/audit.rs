@@ -170,10 +170,10 @@ fn write_jsonl(event: &AuditEvent, path: &str) {
 /// OTLP JSON Lines 形式でファイルに追記する
 #[cfg(feature = "otlp")]
 fn write_otlp(event: &AuditEvent, path: &str) {
-    use opentelemetry_proto::tonic::collector::logs::v1::ExportLogsServiceRequest;
-    use opentelemetry_proto::tonic::common::v1::{AnyValue, any_value};
-    use opentelemetry_proto::tonic::logs::v1::{LogRecord, ResourceLogs, ScopeLogs};
-    use opentelemetry_proto::tonic::resource::v1::Resource;
+    use crate::otlp_types::{
+        AnyValue, AnyValueKind, ExportLogsServiceRequest, LogRecord, Resource, ResourceLogs,
+        ScopeLogs,
+    };
 
     let path = expand_tilde(path);
     if let Err(e) = ensure_parent_dir(&path) {
@@ -221,7 +221,7 @@ fn write_otlp(event: &AuditEvent, path: &str) {
     }
 
     let body = event.reason.as_ref().map(|r| AnyValue {
-        value: Some(any_value::Value::StringValue(r.clone())),
+        kind: AnyValueKind::String(r.clone()),
     });
 
     let log_record = LogRecord {
@@ -231,8 +231,10 @@ fn write_otlp(event: &AuditEvent, path: &str) {
         severity_text: severity_text.to_string(),
         body,
         attributes,
+        dropped_attributes_count: 0,
         flags: 0,
-        ..Default::default()
+        trace_id: vec![],
+        span_id: vec![],
     };
 
     // Resource 属性
@@ -247,13 +249,14 @@ fn write_otlp(event: &AuditEvent, path: &str) {
         resource_logs: vec![ResourceLogs {
             resource: Some(Resource {
                 attributes: resource_attributes,
-                ..Default::default()
+                dropped_attributes_count: 0,
             }),
             scope_logs: vec![ScopeLogs {
+                scope: None,
                 log_records: vec![log_record],
-                ..Default::default()
+                schema_url: String::new(),
             }],
-            ..Default::default()
+            schema_url: String::new(),
         }],
     };
 
@@ -310,44 +313,41 @@ fn ensure_parent_dir(path: &str) -> std::io::Result<()> {
 // --- OTLP ヘルパー関数 ---
 
 #[cfg(feature = "otlp")]
-fn kv_string(key: &str, value: &str) -> opentelemetry_proto::tonic::common::v1::KeyValue {
-    use opentelemetry_proto::tonic::common::v1::{AnyValue, KeyValue, any_value};
+fn kv_string(key: &str, value: &str) -> crate::otlp_types::KeyValue {
+    use crate::otlp_types::{AnyValue, AnyValueKind, KeyValue};
     KeyValue {
         key: key.to_string(),
         value: Some(AnyValue {
-            value: Some(any_value::Value::StringValue(value.to_string())),
+            kind: AnyValueKind::String(value.to_string()),
         }),
     }
 }
 
 #[cfg(feature = "otlp")]
-fn kv_int(key: &str, value: i64) -> opentelemetry_proto::tonic::common::v1::KeyValue {
-    use opentelemetry_proto::tonic::common::v1::{AnyValue, KeyValue, any_value};
+fn kv_int(key: &str, value: i64) -> crate::otlp_types::KeyValue {
+    use crate::otlp_types::{AnyValue, AnyValueKind, KeyValue};
     KeyValue {
         key: key.to_string(),
         value: Some(AnyValue {
-            value: Some(any_value::Value::IntValue(value)),
+            kind: AnyValueKind::Int(value),
         }),
     }
 }
 
 #[cfg(feature = "otlp")]
-fn kv_string_array(
-    key: &str,
-    values: &[String],
-) -> opentelemetry_proto::tonic::common::v1::KeyValue {
-    use opentelemetry_proto::tonic::common::v1::{AnyValue, ArrayValue, KeyValue, any_value};
+fn kv_string_array(key: &str, values: &[String]) -> crate::otlp_types::KeyValue {
+    use crate::otlp_types::{AnyValue, AnyValueKind, ArrayValue, KeyValue};
     KeyValue {
         key: key.to_string(),
         value: Some(AnyValue {
-            value: Some(any_value::Value::ArrayValue(ArrayValue {
+            kind: AnyValueKind::Array(ArrayValue {
                 values: values
                     .iter()
                     .map(|v| AnyValue {
-                        value: Some(any_value::Value::StringValue(v.clone())),
+                        kind: AnyValueKind::String(v.clone()),
                     })
                     .collect(),
-            })),
+            }),
         }),
     }
 }
