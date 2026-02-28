@@ -15,7 +15,7 @@ safe-docker は、コーディングエージェントや開発者に **安全�
 - **ビルド**: Cargo
 - **テスト**: cargo test（ユニット + 統合 + セキュリティ + proptest）
 - **ベンチマーク**: criterion (`cargo bench`)
-- **静的解析**: clippy (`cargo clippy -- -D warnings`)
+- **静的解析**: clippy (`cargo clippy`) — lint 設定は `Cargo.toml` の `[lints]` セクションで一元管理
 
 ## 開発環境の初期設定
 
@@ -37,8 +37,8 @@ cargo test
 # 特定テストの実行
 cargo test test_name
 
-# 静的解析（警告をエラー扱い）
-cargo clippy -- -D warnings
+# 静的解析（lint 設定は Cargo.toml [lints] で管理）
+cargo clippy
 
 # ベンチマーク
 cargo bench
