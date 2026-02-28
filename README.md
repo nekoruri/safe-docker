@@ -158,17 +158,20 @@ OPA Docker AuthZ プラグインを最終防衛線として併用可能。safe-d
 [Releases ページ](https://github.com/nekoruri/safe-docker/releases/latest) からプラットフォームに合ったバイナリをダウンロード:
 
 ```bash
-# GitHub CLI でダウンロード + 検証
+# GitHub CLI でダウンロード + 検証（最新リリースを1つだけ取得）
 gh release download --repo nekoruri/safe-docker \
-  --pattern "safe-docker-*-x86_64-unknown-linux-gnu.tar.gz"
+  --pattern "safe-docker-*-x86_64-unknown-linux-gnu.tar.gz" \
+  --dir /tmp/safe-docker-download --clobber
+
+# 展開対象のファイルを特定（複数マッチを防止）
+ARCHIVE=$(ls /tmp/safe-docker-download/safe-docker-*-x86_64-unknown-linux-gnu.tar.gz)
 
 # アーティファクトの署名を検証 (Sigstore ベース)
-gh attestation verify safe-docker-*-x86_64-unknown-linux-gnu.tar.gz \
-  --repo nekoruri/safe-docker
+gh attestation verify "$ARCHIVE" --repo nekoruri/safe-docker
 
 # 展開・配置
-tar xzf safe-docker-*-x86_64-unknown-linux-gnu.tar.gz
-cp safe-docker-*/safe-docker ~/.local/bin/
+tar xzf "$ARCHIVE" --strip-components=1 -C /tmp/safe-docker-download
+cp /tmp/safe-docker-download/safe-docker ~/.local/bin/
 ```
 
 > リリースバイナリには GitHub Artifact Attestations (Sigstore ベース) による署名済みビルド証明が付与されています。
@@ -422,7 +425,7 @@ cargo clippy -- -D warnings
 
 ## OPA Docker AuthZ (Layer 2)
 
-`opa/authz.rego` を `/etc/docker/config/authz.rego` にコピーし、opa-docker-authz プラグインをインストールして使用する。詳細は [opa-docker-authz](https://github.com/open-policy-agent/opa-docker-authz) を参照。
+`opa/authz.rego` をプラグインの rootfs にコピーし、opa-docker-authz プラグインをインストールして使用する。詳細は [docs/OPA_DOCKER_AUTHZ.md](docs/OPA_DOCKER_AUTHZ.md) を参照。
 
 ### リカバリ手順
 
