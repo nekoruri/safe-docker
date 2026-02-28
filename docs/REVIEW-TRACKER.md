@@ -155,47 +155,47 @@
 ### DOC-01: OPA ガイドのポリシーファイルパス不整合 [PR #27, Copilot]
 - **ファイル**: `docs/OPA_DOCKER_AUTHZ.md:308`
 - **内容**: `opa-args` が `/opa/authz.rego` を参照するが、次の手順では `/etc/docker/config/authz.rego` にコピー。
-- **ステータス**: 🔴 未対応
+- **ステータス**: 🟢 対応済み (OPA ガイドはプラグイン rootfs へのコピーで一貫。README の OPA セクションの誤ったパス参照を修正)
 
 ### DOC-02: OPA ガイドのプラグイン名不一致 [PR #27, Copilot]
 - **ファイル**: `docs/OPA_DOCKER_AUTHZ.md:340`
 - **内容**: `authorization-plugins` と README の `docker plugin disable` でプラグイン名が異なる。
-- **ステータス**: 🔴 未対応
+- **ステータス**: 🟢 対応済み (現在は `opa-docker-authz` で統一済み)
 
 ### DOC-03: OPA ガイドのホームディレクトリパス不整合 [PR #27, Copilot]
 - **ファイル**: `docs/OPA_DOCKER_AUTHZ.md`
 - **内容**: ガイドは `/home/username/` だが、`opa/authz.rego` は `/home/masa/` がハードコード。
-- **ステータス**: 🔴 未対応
+- **ステータス**: 🟢 対応済み (`opa/authz.rego` は `/home/username/` に修正済み。一貫性テストでもハードコードパスを検出)
 
 ### DOC-04: OPA ガイドの capability deny 例と実装の不整合 [PR #27, Copilot]
 - **ファイル**: `docs/OPA_DOCKER_AUTHZ.md`
 - **内容**: `opa/authz.rego` の実装範囲と本文の説明が不一致。
-- **ステータス**: 🔴 未対応
+- **ステータス**: 🟢 対応済み (rego の capability リストは safe-docker の default_blocked_capabilities() と一致。一貫性テストで自動検証)
 
 ### DOC-05: OPA ガイドのポリシー対応表に未実装項目 [PR #27, Copilot]
 - **ファイル**: `docs/OPA_DOCKER_AUTHZ.md:287`
 - **内容**: `HostConfig.Devices` 等は deny ルールがないが、表に含まれている。
-- **ステータス**: 🔴 未対応
+- **ステータス**: 🟢 対応済み (rego に Devices の deny ルール存在。対応表の全項目に対応する deny ルールが実装済み)
 
 ### DOC-06: ATTACK_SURFACE_ANALYSIS で `--uts=host` が未対応のまま [PR #16, Copilot]
 - **ファイル**: `docs/ATTACK_SURFACE_ANALYSIS.md:237`
 - **内容**: PR#16 で実装済みだが、ステータスが「未対応/ギャップ」のまま。suggestion 付き。
-- **ステータス**: 🔴 未対応
+- **ステータス**: 🟢 対応済み (A8 として検出済みに記載、G1 として対応済みギャップに記載)
 
 ### DOC-07: ATTACK_SURFACE_ANALYSIS のバージョン表記が不整合 [PR #19, Copilot]
 - **ファイル**: `docs/ATTACK_SURFACE_ANALYSIS.md:3`
 - **内容**: 「v0.5.0」と記載だが当時の Cargo.toml は 0.4.0。
-- **ステータス**: 🔴 未対応 (現在は v0.7.0 のため、最新バージョンに更新すべき)
+- **ステータス**: 🟢 対応済み (初版作成バージョンと最終更新バージョンを明記する形式に修正)
 
 ### DOC-08: README インストール手順のグロブ安全性 [PR #13, Copilot]
 - **ファイル**: `README.md:149`
 - **内容**: グロブで複数ファイルがマッチする場合に誤ったアーティファクトを検証/展開する可能性。
-- **ステータス**: 🔴 未対応
+- **ステータス**: 🟢 対応済み (専用ディレクトリにダウンロードし、変数で展開対象を特定する手順に修正)
 
 ### DOC-09: SUPPLY_CHAIN_SECURITY のコミットハッシュ記述 [PR #13, Copilot]
 - **ファイル**: `docs/SUPPLY_CHAIN_SECURITY.md:211`
 - **内容**: 「commit ハッシュがソースの完全性を保証」は不正確。署名済みタグの検証を推奨する表現に修正すべき。
-- **ステータス**: 🔴 未対応
+- **ステータス**: 🟢 対応済み (署名済みタグの検証を推奨する表現に修正)
 
 ---
 
