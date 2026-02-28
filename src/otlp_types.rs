@@ -178,6 +178,7 @@ pub enum AnyValueKind {
 /// An array of `AnyValue`.
 #[derive(Debug, Serialize)]
 pub struct ArrayValue {
+    #[serde(skip_serializing_if = "Vec::is_empty")]
     pub values: Vec<AnyValue>,
 }
 
@@ -245,6 +246,16 @@ mod tests {
         };
         let json = serde_json::to_value(&v).unwrap();
         assert_eq!(json, serde_json::json!({"intValue": "42"}));
+    }
+
+    #[test]
+    fn test_any_value_empty_array() {
+        let v = AnyValue {
+            kind: AnyValueKind::Array(ArrayValue { values: vec![] }),
+        };
+        let json = serde_json::to_value(&v).unwrap();
+        // Empty values vec is omitted per proto3 JSON mapping
+        assert_eq!(json, serde_json::json!({"arrayValue": {}}));
     }
 
     #[test]
