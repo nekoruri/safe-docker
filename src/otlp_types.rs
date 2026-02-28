@@ -7,6 +7,10 @@
 use serde::Serialize;
 use serde::ser::{SerializeStruct, Serializer};
 
+fn is_zero_u32(v: &u32) -> bool {
+    *v == 0
+}
+
 /// Top-level OTLP Logs export request.
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -49,7 +53,9 @@ pub struct LogRecord {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub body: Option<AnyValue>,
     pub attributes: Vec<KeyValue>,
+    #[serde(skip_serializing_if = "is_zero_u32")]
     pub dropped_attributes_count: u32,
+    #[serde(skip_serializing_if = "is_zero_u32")]
     pub flags: u32,
     #[serde(
         serialize_with = "serialize_bytes_as_hex",
@@ -68,6 +74,7 @@ pub struct LogRecord {
 #[serde(rename_all = "camelCase")]
 pub struct Resource {
     pub attributes: Vec<KeyValue>,
+    #[serde(skip_serializing_if = "is_zero_u32")]
     pub dropped_attributes_count: u32,
 }
 
@@ -78,6 +85,7 @@ pub struct InstrumentationScope {
     pub name: String,
     pub version: String,
     pub attributes: Vec<KeyValue>,
+    #[serde(skip_serializing_if = "is_zero_u32")]
     pub dropped_attributes_count: u32,
 }
 
