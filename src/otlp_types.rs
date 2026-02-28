@@ -21,6 +21,7 @@ pub struct ResourceLogs {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub resource: Option<Resource>,
     pub scope_logs: Vec<ScopeLogs>,
+    #[serde(skip_serializing_if = "String::is_empty")]
     pub schema_url: String,
 }
 
@@ -31,6 +32,7 @@ pub struct ScopeLogs {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub scope: Option<InstrumentationScope>,
     pub log_records: Vec<LogRecord>,
+    #[serde(skip_serializing_if = "String::is_empty")]
     pub schema_url: String,
 }
 
@@ -77,6 +79,7 @@ pub struct InstrumentationScope {
 #[derive(Debug, Serialize)]
 pub struct KeyValue {
     pub key: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub value: Option<AnyValue>,
 }
 
@@ -141,7 +144,11 @@ fn serialize_bytes_as_hex<S>(value: &[u8], serializer: S) -> Result<S::Ok, S::Er
 where
     S: Serializer,
 {
-    let hex: String = value.iter().map(|b| format!("{:02x}", b)).collect();
+    use std::fmt::Write;
+    let mut hex = String::with_capacity(value.len() * 2);
+    for b in value {
+        let _ = write!(hex, "{:02x}", b);
+    }
     serializer.serialize_str(&hex)
 }
 
