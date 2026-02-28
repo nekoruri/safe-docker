@@ -2,7 +2,43 @@
 //!
 //! These types replace the `opentelemetry-proto` crate dependency.
 //! Only JSON serialization is supported (no gRPC/protobuf encoding).
-//! Field naming follows protobuf JSON mapping (`camelCase`).
+//!
+//! # Proto3 JSON Mapping Rules
+//!
+//! このモジュールの構造体は [proto3 JSON mapping] に準拠する。
+//! フィールドを追加・変更する際は以下のルールを守ること。
+//!
+//! ## フィールド名
+//! - `snake_case` → `lowerCamelCase` (`#[serde(rename_all = "camelCase")]`)
+//!
+//! ## デフォルト値の省略
+//! proto3 ではデフォルト値を持つフィールドは JSON 出力から**省略すべき (should)**。
+//! **全フィールドに適切な `skip_serializing_if` を付与すること。**
+//!
+//! | 型 | デフォルト値 | skip 条件 |
+//! |---|---|---|
+//! | `String` | `""` | `String::is_empty` |
+//! | `Vec<T>` | `[]` | `Vec::is_empty` |
+//! | `u32` | `0` | `is_zero_u32` |
+//! | `i32` | `0` | `is_zero_i32` |
+//! | `Option<T>` | `None` | `Option::is_none` |
+//! | `Vec<u8>` (bytes) | `[]` | `Vec::is_empty` |
+//!
+//! 例外: 構造的に必須な repeated フィールド（`resource_logs`, `scope_logs`,
+//! `log_records`）は空でも省略しない。
+//!
+//! ## 型別シリアライズ
+//! | proto3 型 | JSON 表現 | 備考 |
+//! |---|---|---|
+//! | `uint64`/`fixed64` | 文字列 `"123"` | `serialize_u64_as_string` |
+//! | `int64` (AnyValue) | 文字列 `"42"` | JSON の number は 53bit 精度のため |
+//! | `int32`/`uint32` | 数値 `9` | |
+//! | `enum` | 数値 `9` | **OTLP 固有**: 文字列名ではなく整数値 |
+//! | `bytes` | hex 文字列 | **OTLP 固有**: base64 ではなく hex (trace_id/span_id) |
+//! | `oneof` (AnyValue) | variant key のみ | `{"stringValue": "..."}` |
+//! | message (`Option`) | 省略 or object | `null` は使わない |
+//!
+//! [proto3 JSON mapping]: https://protobuf.dev/programming-guides/proto3/#json
 
 use serde::Serialize;
 use serde::ser::{SerializeStruct, Serializer};

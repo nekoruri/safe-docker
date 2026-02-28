@@ -59,6 +59,7 @@ src/
 ├── compose.rs         # docker-compose.yml の解析（volumes、危険設定）※両モード共通
 ├── config.rs          # TOML 設定ファイルの読み込み（[wrapper] セクション含む）
 ├── audit.rs           # 監査ログ（JSONL / OTLP）※両モード共通、mode フィールドで区別
+├── otlp_types.rs      # OTLP 構造体の手動定義（feature "otlp" 時のみ）
 ├── error.rs           # エラー型定義
 └── test_utils.rs      # テスト用ユーティリティ（TempEnvVar, EnvLock, env_lock）※#[cfg(test)]
 
@@ -123,6 +124,12 @@ OS 引数 → wrapper::run()
 - Compose の外部ファイル参照: `extract_include_paths()` で `host_paths` に追加 → policy が ask で検証
 - **テストは必須**: セキュリティツールなので、すべての修正にテストを付ける
 - **clippy を通す**: `cargo clippy -- -D warnings` が通ること
+
+### OTLP 構造体 (`otlp_types.rs`) の変更時の注意
+`otlp_types.rs` は proto3 JSON mapping に準拠した手動定義の OTLP 構造体。フィールド追加・変更時は以下を守ること:
+- **デフォルト値の省略**: 全フィールドに `#[serde(skip_serializing_if = ...)]` を付与する（proto3 ルール: デフォルト値は省略すべき）。`String` → `String::is_empty`, `Vec` → `Vec::is_empty`, `u32`/`i32` → `is_zero_*`, `Option` → `Option::is_none`
+- **OTLP 固有ルール**: enum は文字列名ではなく整数値、bytes (trace_id/span_id) は base64 ではなく hex 文字列
+- 詳細は `otlp_types.rs` 冒頭のモジュールドキュメントを参照
 
 ### is_flag_with_value() の重要性
 `docker_args.rs` の `is_flag_with_value()` は、値を取るフラグのリスト。ここに不足があると、次の引数（値）がイメージ名やフラグとして誤認され、後続の危険フラグが検出されなくなる。新しいフラグを個別処理する場合でも、非 host 値のスキップ用にこのリストにも追加すること。
