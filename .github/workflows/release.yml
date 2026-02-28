@@ -30,6 +30,9 @@ jobs:
             os: macos-latest
           - target: aarch64-apple-darwin
             os: macos-latest
+          - target: x86_64-unknown-linux-musl
+            os: ubuntu-latest
+            musl: true
 
     steps:
       - uses: actions/checkout@v4
@@ -41,6 +44,10 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: ${{ matrix.target }}
+
+      - name: Install musl-tools
+        if: matrix.musl
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
 
       - name: Install cross
         if: matrix.cross
