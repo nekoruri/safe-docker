@@ -24,4 +24,8 @@ updates:
     groups:
       github-actions:
         patterns: ["*"]
+    ignore:
+      # dtolnay/rust-toolchain uses toolchain versions (e.g. @1.88, @stable)
+      # as git refs, not action version tags. Dependabot misinterprets these.
+      - dependency-name: "dtolnay/rust-toolchain"
     open-pull-requests-limit: 5
