@@ -150,6 +150,7 @@ pub struct InstrumentationScope {
 /// A key-value pair for attributes.
 #[derive(Debug, Serialize)]
 pub struct KeyValue {
+    #[serde(skip_serializing_if = "String::is_empty")]
     pub key: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub value: Option<AnyValue>,
@@ -351,6 +352,42 @@ mod tests {
         let json = serde_json::to_value(&record).unwrap();
         assert_eq!(json["traceId"], "0123abff");
         assert_eq!(json["spanId"], "dead");
+    }
+
+    #[test]
+    fn test_structural_repeated_fields_always_present() {
+        // resource_logs, scope_logs, log_records are structural repeated fields
+        // that must be serialized even when empty (documented exception).
+        let request = ExportLogsServiceRequest {
+            resource_logs: vec![],
+        };
+        let json = serde_json::to_value(&request).unwrap();
+        assert!(
+            json.get("resourceLogs").is_some(),
+            "resourceLogs must be present even when empty"
+        );
+
+        let rl = ResourceLogs {
+            resource: None,
+            scope_logs: vec![],
+            schema_url: String::new(),
+        };
+        let json = serde_json::to_value(&rl).unwrap();
+        assert!(
+            json.get("scopeLogs").is_some(),
+            "scopeLogs must be present even when empty"
+        );
+
+        let sl = ScopeLogs {
+            scope: None,
+            log_records: vec![],
+            schema_url: String::new(),
+        };
+        let json = serde_json::to_value(&sl).unwrap();
+        assert!(
+            json.get("logRecords").is_some(),
+            "logRecords must be present even when empty"
+        );
     }
 
     #[test]
