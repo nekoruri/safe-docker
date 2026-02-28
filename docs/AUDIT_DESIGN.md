@@ -42,7 +42,7 @@ stdin (JSON) → hook::read_input()
 
 | ファイル | 変更内容 |
 |---------|---------|
-| `Cargo.toml` | `otlp` feature + `opentelemetry-proto` optional 依存 + `gethostname` 依存追加 |
+| `Cargo.toml` | `otlp` feature + `gethostname` 依存追加 |
 | `src/main.rs` | `pub mod audit` 追加、`process_command_with_audit()` 新設、`main()` に audit 統合 |
 | `src/audit.rs` | **新規作成** — AuditEvent, AuditCollector, JSONL/OTLP 出力 |
 | `src/config.rs` | `AuditConfig`, `AuditFormat` 追加、`Config` に `audit` フィールド追加 |

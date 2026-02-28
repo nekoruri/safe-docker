@@ -51,9 +51,15 @@ pub struct LogRecord {
     pub attributes: Vec<KeyValue>,
     pub dropped_attributes_count: u32,
     pub flags: u32,
-    #[serde(serialize_with = "serialize_bytes_as_hex")]
+    #[serde(
+        serialize_with = "serialize_bytes_as_hex",
+        skip_serializing_if = "Vec::is_empty"
+    )]
     pub trace_id: Vec<u8>,
-    #[serde(serialize_with = "serialize_bytes_as_hex")]
+    #[serde(
+        serialize_with = "serialize_bytes_as_hex",
+        skip_serializing_if = "Vec::is_empty"
+    )]
     pub span_id: Vec<u8>,
 }
 
@@ -233,8 +239,8 @@ mod tests {
         assert_eq!(json["timeUnixNano"], "1234567890");
         assert_eq!(json["observedTimeUnixNano"], "1234567890");
         assert_eq!(json["severityNumber"], 9);
-        assert_eq!(json["traceId"], "");
-        assert_eq!(json["spanId"], "");
+        assert!(json.get("traceId").is_none());
+        assert!(json.get("spanId").is_none());
     }
 
     #[test]
