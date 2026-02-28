@@ -1,1 +1,17 @@
 /target
+
+# Editor / IDE
+*.swp
+*.swo
+*~
+.idea/
+.vscode/
+*.iml
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Playwright screenshots
+*.png
+*.jpeg
